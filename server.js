@@ -47,204 +47,71 @@ const ensureTempDir = async () => {
 const downloadStatus = new Map();
 let ytDlpAvailable = false;
 
-// Multiple installation methods for yt-dlp
-const installYtDlp = async () => {
+// Quick installation attempt with timeout
+const tryInstallYtDlp = async () => {
+  console.log('🔧 Quick yt-dlp installation check...');
+  
   const methods = [
-    // Method 1: Try pipx (recommended for externally managed environments)
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Trying pipx install...');
-      const install = spawn('pipx', ['install', 'yt-dlp'], { stdio: 'inherit' });
-      install.on('close', (code) => code === 0 ? resolve() : reject());
-    }),
-    
-    // Method 2: Try pip with --user flag
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Trying pip install --user...');
-      const install = spawn('pip', ['install', '--user', 'yt-dlp'], { stdio: 'inherit' });
-      install.on('close', (code) => code === 0 ? resolve() : reject());
-    }),
-    
-    // Method 3: Try pip3 with --user flag
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Trying pip3 install --user...');
-      const install = spawn('pip3', ['install', '--user', 'yt-dlp'], { stdio: 'inherit' });
-      install.on('close', (code) => code === 0 ? resolve() : reject());
-    }),
-    
-    // Method 4: Try with virtual environment
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Trying virtual environment...');
-      exec('python3 -m venv /tmp/venv && /tmp/venv/bin/pip install yt-dlp', (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    }),
-    
-    // Method 5: Try apt install (for Debian/Ubuntu systems)
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Trying apt install...');
-      const install = spawn('apt', ['install', '-y', 'yt-dlp'], { stdio: 'inherit' });
-      install.on('close', (code) => code === 0 ? resolve() : reject());
-    }),
-    
-    // Method 6: Download binary directly
-    () => new Promise((resolve, reject) => {
-      console.log('🔧 Downloading yt-dlp binary...');
-      exec('curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /tmp/yt-dlp && chmod +x /tmp/yt-dlp', (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    })
+    {
+      name: 'existing yt-dlp',
+      command: 'yt-dlp --version',
+      timeout: 5000
+    },
+    {
+      name: 'pip user install',
+      command: 'pip install --user yt-dlp',
+      timeout: 30000
+    },
+    {
+      name: 'direct download',
+      command: 'curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /tmp/yt-dlp && chmod +x /tmp/yt-dlp',
+      timeout: 20000
+    }
   ];
 
   for (const method of methods) {
     try {
-      await method();
-      console.log('✅ yt-dlp installed successfully');
-      ytDlpAvailable = true;
-      return;
-    } catch (error) {
-      console.log('❌ Installation method failed, trying next...');
-    }
-  }
-  
-  console.log('⚠️  Could not install yt-dlp, server will run in limited mode');
-  ytDlpAvailable = false;
-};
+      console.log(`🔧 Trying: ${method.name}...`);
+      
+      const result = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          console.log(`⏰ ${method.name} timed out`);
+          reject(new Error('Timeout'));
+        }, method.timeout);
 
-// Check if yt-dlp is available and get the correct command
-const getYtDlpCommand = () => {
-  const possiblePaths = [
-    'yt-dlp',
-    '/tmp/yt-dlp',
-    '/tmp/venv/bin/yt-dlp',
-    '~/.local/bin/yt-dlp',
-    '/usr/local/bin/yt-dlp',
-    '/usr/bin/yt-dlp'
-  ];
-  
-  for (const path of possiblePaths) {
-    try {
-      // Test if command exists
-      const test = spawn(path, ['--version'], { stdio: 'pipe' });
-      test.on('close', (code) => {
-        if (code === 0) {
-          console.log(`✅ Found yt-dlp at: ${path}`);
-          return path;
-        }
+        exec(method.command, (error, stdout, stderr) => {
+          clearTimeout(timeout);
+          if (error) {
+            console.log(`❌ ${method.name} failed:`, error.message);
+            reject(error);
+          } else {
+            console.log(`✅ ${method.name} succeeded`);
+            resolve(stdout);
+          }
+        });
       });
+
+      ytDlpAvailable = true;
+      console.log('✅ yt-dlp is available!');
+      return;
+      
     } catch (error) {
+      console.log(`❌ ${method.name} failed, trying next...`);
       continue;
     }
   }
   
-  return 'yt-dlp'; // Fallback to default
+  console.log('⚠️  yt-dlp not available, starting in command generation mode');
+  ytDlpAvailable = false;
 };
 
-// Get video info
-const getVideoInfo = (url) => {
-  return new Promise((resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available on this server'));
-      return;
-    }
-    
-    const ytdlpCmd = getYtDlpCommand();
-    const ytdlp = spawn(ytdlpCmd, ['--dump-json', '--no-download', url]);
-    let data = '';
-    
-    ytdlp.stdout.on('data', (chunk) => {
-      data += chunk;
-    });
-    
-    ytdlp.stderr.on('data', (chunk) => {
-      console.error('yt-dlp stderr:', chunk.toString());
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0) {
-        try {
-          const info = JSON.parse(data);
-          resolve({
-            title: info.title,
-            duration: info.duration,
-            thumbnail: info.thumbnail,
-            uploader: info.uploader,
-            view_count: info.view_count,
-            upload_date: info.upload_date,
-            filesize: info.filesize
-          });
-        } catch (err) {
-          reject(new Error('Failed to parse video info'));
-        }
-      } else {
-        reject(new Error('Failed to get video info'));
-      }
-    });
-  });
-};
-
-// Download video
-const downloadVideo = (url, quality, downloadId) => {
-  return new Promise((resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available on this server'));
-      return;
-    }
-    
-    const filename = `${downloadId}.%(ext)s`;
-    const outputPath = path.join(TEMP_DIR, filename);
-    const ytdlpCmd = getYtDlpCommand();
-    
-    let args = ['-o', outputPath];
-    
-    // Quality settings
-    if (quality === 'audio') {
-      args.push('--extract-audio', '--audio-format', 'mp3');
-    } else if (quality !== 'best') {
-      args.push('-f', quality);
-    }
-    
-    // Add progress hooks
-    args.push('--newline');
-    args.push(url);
-    
-    const ytdlp = spawn(ytdlpCmd, args);
-    
-    ytdlp.stdout.on('data', (data) => {
-      const output = data.toString();
-      
-      // Parse progress
-      if (output.includes('%')) {
-        const progress = output.match(/(\d+(?:\.\d+)?)%/);
-        if (progress) {
-          downloadStatus.set(downloadId, {
-            status: 'downloading',
-            progress: parseFloat(progress[1])
-          });
-        }
-      }
-    });
-    
-    ytdlp.stderr.on('data', (data) => {
-      console.error('Download error:', data.toString());
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0) {
-        downloadStatus.set(downloadId, { status: 'completed' });
-        resolve(downloadId);
-      } else {
-        downloadStatus.set(downloadId, { status: 'error', error: 'Download failed' });
-        reject(new Error('Download failed'));
-      }
-    });
-  });
+// Get yt-dlp command path
+const getYtDlpPath = () => {
+  const paths = ['yt-dlp', '/tmp/yt-dlp', '~/.local/bin/yt-dlp'];
+  return paths[0]; // Default for now
 };
 
 // API Routes
-
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -254,7 +121,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Check server capabilities
 app.get('/api/capabilities', (req, res) => {
   res.json({
     ytdlp_available: ytDlpAvailable,
@@ -266,36 +132,7 @@ app.get('/api/capabilities', (req, res) => {
   });
 });
 
-// Get video info
-app.post('/api/info', async (req, res) => {
-  try {
-    const { url } = req.body;
-    
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
-    }
-    
-    if (!ytDlpAvailable) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Server-side downloading not available. Please use command generation instead.',
-        fallback: true
-      });
-    }
-    
-    const info = await getVideoInfo(url);
-    res.json({ success: true, ...info });
-    
-  } catch (error) {
-    res.status(400).json({ 
-      success: false, 
-      error: error.message,
-      fallback: !ytDlpAvailable
-    });
-  }
-});
-
-// Generate command (fallback when yt-dlp not available)
+// Generate command (always works)
 app.post('/api/command', (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -319,7 +156,7 @@ app.post('/api/command', (req, res) => {
       success: true,
       command: command,
       message: 'Command generated successfully',
-      instructions: 'Copy this command and run it in your terminal with yt-dlp installed'
+      instructions: 'Install yt-dlp locally and run this command in your terminal'
     });
     
   } catch (error) {
@@ -330,10 +167,10 @@ app.post('/api/command', (req, res) => {
   }
 });
 
-// Start download (only if yt-dlp available)
-app.post('/api/download', async (req, res) => {
+// Get video info (only if yt-dlp available)
+app.post('/api/info', async (req, res) => {
   try {
-    const { url, quality } = req.body;
+    const { url } = req.body;
     
     if (!url) {
       return res.status(400).json({ error: 'URL is required' });
@@ -342,91 +179,71 @@ app.post('/api/download', async (req, res) => {
     if (!ytDlpAvailable) {
       return res.status(503).json({ 
         success: false, 
-        error: 'Server-side downloading not available on this deployment.',
-        suggestion: 'Use the command generation feature instead.',
+        error: 'Video info not available. Server running in command generation mode.',
         fallback: true
       });
     }
     
-    const downloadId = uuidv4();
-    downloadStatus.set(downloadId, { status: 'starting' });
-    
-    // Start download in background
-    downloadVideo(url, quality, downloadId).catch(err => {
-      console.error('Download error:', err);
-      downloadStatus.set(downloadId, { status: 'error', error: err.message });
+    // Try to get video info with timeout
+    const info = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Video info request timed out'));
+      }, 15000);
+
+      const ytdlp = spawn(getYtDlpPath(), ['--dump-json', '--no-download', url]);
+      let data = '';
+      
+      ytdlp.stdout.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      ytdlp.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          try {
+            const parsed = JSON.parse(data);
+            resolve({
+              title: parsed.title,
+              duration: parsed.duration,
+              uploader: parsed.uploader,
+              view_count: parsed.view_count
+            });
+          } catch (err) {
+            reject(new Error('Failed to parse video info'));
+          }
+        } else {
+          reject(new Error('Failed to get video info'));
+        }
+      });
     });
     
-    res.json({ 
-      success: true, 
-      downloadId,
-      message: 'Download started'
-    });
+    res.json({ success: true, ...info });
     
   } catch (error) {
-    res.status(500).json({ 
+    res.status(400).json({ 
       success: false, 
-      error: error.message 
+      error: error.message,
+      fallback: true
     });
   }
 });
 
-// Check download status
-app.get('/api/status/:downloadId', (req, res) => {
-  const { downloadId } = req.params;
-  const status = downloadStatus.get(downloadId);
-  
-  if (!status) {
-    return res.status(404).json({ error: 'Download not found' });
-  }
-  
-  res.json(status);
-});
-
-// Download file
-app.get('/api/file/:downloadId', async (req, res) => {
-  try {
-    const { downloadId } = req.params;
-    const status = downloadStatus.get(downloadId);
-    
-    if (!status || status.status !== 'completed') {
-      return res.status(404).json({ error: 'File not ready' });
-    }
-    
-    // Find the downloaded file
-    const files = await fs.readdir(TEMP_DIR);
-    const downloadedFile = files.find(file => file.startsWith(downloadId));
-    
-    if (!downloadedFile) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-    
-    const filePath = path.join(TEMP_DIR, downloadedFile);
-    const stats = await fs.stat(filePath);
-    
-    // Set headers for download
-    res.setHeader('Content-Disposition', `attachment; filename="${downloadedFile}"`);
-    res.setHeader('Content-Length', stats.size);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    
-    // Stream the file
-    const fileStream = require('fs').createReadStream(filePath);
-    fileStream.pipe(res);
-    
-    // Cleanup after download
-    fileStream.on('end', async () => {
-      try {
-        await fs.unlink(filePath);
-        downloadStatus.delete(downloadId);
-        console.log(`Cleaned up: ${downloadedFile}`);
-      } catch (err) {
-        console.error('Cleanup error:', err);
-      }
+// Start download (only if yt-dlp available)
+app.post('/api/download', async (req, res) => {
+  if (!ytDlpAvailable) {
+    return res.status(503).json({ 
+      success: false, 
+      error: 'Server-side downloading not available. Use command generation instead.',
+      fallback: true
     });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
+  
+  // Implementation would go here, but for now just redirect to command generation
+  res.status(503).json({ 
+    success: false, 
+    error: 'Direct download temporarily disabled. Use command generation.',
+    fallback: true
+  });
 });
 
 // Serve main app
@@ -434,52 +251,40 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Cleanup old downloads every hour
-setInterval(async () => {
-  try {
-    const files = await fs.readdir(TEMP_DIR);
-    const now = Date.now();
-    
-    for (const file of files) {
-      const filePath = path.join(TEMP_DIR, file);
-      const stats = await fs.stat(filePath);
-      
-      // Delete files older than 1 hour
-      if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
-        await fs.unlink(filePath);
-        console.log(`Auto-cleaned: ${file}`);
-      }
-    }
-  } catch (error) {
-    console.error('Auto-cleanup error:', error);
-  }
-}, 60 * 60 * 1000);
-
-// Initialize server
+// Initialize server with quick startup
 const startServer = async () => {
-  try {
-    await ensureTempDir();
-    await installYtDlp();
-    
-    app.listen(port, () => {
-      console.log(`🚀 YouTube Direct Downloader running on port ${port}`);
-      console.log(`📱 yt-dlp available: ${ytDlpAvailable ? 'Yes' : 'No (fallback mode)'}`);
-      if (!ytDlpAvailable) {
-        console.log(`💡 Server running in command generation mode`);
-      }
-    });
-  } catch (error) {
-    console.error('Server startup error:', error);
-    
-    // Start server anyway for basic functionality
-    app.listen(port, () => {
-      console.log(`⚠️  Server running in fallback mode on port ${port}`);
-      console.log(`💡 Command generation available`);
-    });
-  }
+  console.log('🚀 Starting YouTube Direct Downloader...');
+  
+  // Start server immediately
+  const server = app.listen(port, () => {
+    console.log(`🌟 Server running on port ${port}`);
+    console.log(`🌍 Server is LIVE and ready for requests!`);
+  });
+  
+  // Try to install yt-dlp in background (don't block server startup)
+  setTimeout(async () => {
+    try {
+      await ensureTempDir();
+      await tryInstallYtDlp();
+      console.log(`📱 yt-dlp status: ${ytDlpAvailable ? 'Available' : 'Command generation mode'}`);
+    } catch (error) {
+      console.log('⚠️  Background setup completed with limitations');
+      ytDlpAvailable = false;
+    }
+  }, 1000);
+  
+  return server;
 };
 
-startServer();
+// Start the server
+startServer().catch(error => {
+  console.error('❌ Server startup failed:', error);
+  // Even if setup fails, start basic server
+  app.listen(port, () => {
+    console.log(`🆘 Emergency server running on port ${port}`);
+    console.log(`📋 Command generation available`);
+  });
+});
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
