@@ -48,6 +48,8 @@ const downloadStatus = new Map();
 let ytDlpAvailable = false;
 let ytDlpPath = 'yt-dlp';
 let botDetectionIssue = false;
+let directDownloadAttempts = 0;
+let successfulDownloads = 0;
 
 // Quick installation attempt with timeout
 const tryInstallYtDlp = async () => {
@@ -100,7 +102,7 @@ const tryInstallYtDlp = async () => {
       ytDlpAvailable = true;
       console.log(`✅ yt-dlp is available at: ${ytDlpPath}`);
       
-      // Test if YouTube works (quick test)
+      // Quick test for bot detection
       await testYouTubeAccess();
       return;
       
@@ -114,57 +116,60 @@ const tryInstallYtDlp = async () => {
   ytDlpAvailable = false;
 };
 
-// Test YouTube access
+// Test YouTube access with anti-detection measures
 const testYouTubeAccess = async () => {
   try {
-    console.log('🧪 Testing YouTube access...');
+    console.log('🧪 Testing YouTube access with anti-detection...');
     
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.log('⏰ YouTube test timed out');
+        botDetectionIssue = true;
         reject(new Error('Test timeout'));
-      }, 10000);
+      }, 15000);
 
-      // Test with a simple command that should work
+      // Test with anti-detection measures
       const test = spawn(ytDlpPath, [
         '--list-formats',
         '--no-warnings',
-        'https://www.youtube.com/watch?v=jNQXAC9IVRw' // "Me at the zoo" - first YouTube video
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--extractor-args', 'youtube:player_client=web',
+        'https://www.youtube.com/watch?v=jNQXAC9IVRw' // First YouTube video
       ]);
       
       let hasOutput = false;
+      let errorOutput = '';
       
       test.stdout.on('data', (data) => {
         hasOutput = true;
         clearTimeout(timeout);
+        console.log('✅ YouTube access test passed');
+        botDetectionIssue = false;
         resolve();
       });
       
       test.stderr.on('data', (data) => {
-        const error = data.toString();
-        if (error.includes('Sign in to confirm you\'re not a bot') || 
-            error.includes('bot') || 
-            error.includes('authentication')) {
-          console.log('🤖 Bot detection detected - switching to command generation mode');
-          botDetectionIssue = true;
-          clearTimeout(timeout);
-          reject(new Error('Bot detection'));
-        }
+        errorOutput += data.toString();
       });
       
       test.on('close', (code) => {
         clearTimeout(timeout);
         if (!hasOutput) {
-          reject(new Error('No output received'));
+          console.log('🤖 YouTube access limited:', errorOutput);
+          if (errorOutput.includes('Sign in to confirm') || 
+              errorOutput.includes('bot') || 
+              errorOutput.includes('authentication')) {
+            botDetectionIssue = true;
+            console.log('🤖 Bot detection confirmed - hybrid mode enabled');
+          }
+          reject(new Error('No output or bot detection'));
         }
       });
     });
     
-    console.log('✅ YouTube access test passed');
-    
   } catch (error) {
-    console.log('🤖 YouTube access limited - bot detection or other issues');
+    console.log('🤖 YouTube access test failed - enabling hybrid mode');
     botDetectionIssue = true;
-    // Don't disable yt-dlp completely, but mark the limitation
   }
 };
 
@@ -194,6 +199,184 @@ const getBasicVideoInfo = (url) => {
   };
 };
 
+// Enhanced video info with anti-detection
+const getVideoInfo = (url) => {
+  return new Promise((resolve, reject) => {
+    if (!ytDlpAvailable) {
+      reject(new Error('yt-dlp not available'));
+      return;
+    }
+
+    console.log(`🔍 Getting video info with anti-detection: ${url}`);
+    
+    const ytdlp = spawn(ytDlpPath, [
+      '--dump-json', 
+      '--no-download',
+      '--no-warnings',
+      '--ignore-errors',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      '--add-header', 'Accept-Language:en-US,en;q=0.9',
+      '--extractor-args', 'youtube:player_client=web',
+      url
+    ]);
+    
+    let data = '';
+    let errorData = '';
+    
+    ytdlp.stdout.on('data', (chunk) => {
+      data += chunk;
+    });
+    
+    ytdlp.stderr.on('data', (chunk) => {
+      errorData += chunk;
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code === 0 && data.trim()) {
+        try {
+          const info = JSON.parse(data.trim());
+          resolve({
+            title: info.title || 'Unknown Title',
+            duration: info.duration || 0,
+            uploader: info.uploader || 'Unknown Uploader',
+            view_count: info.view_count || 0,
+            thumbnail: info.thumbnail || '',
+            webpage_url: info.webpage_url || url
+          });
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError);
+          reject(new Error('Invalid video data received'));
+        }
+      } else {
+        console.error('Video info error:', errorData);
+        if (errorData.includes('Sign in to confirm') || 
+            errorData.includes('bot') || 
+            errorData.includes('authentication')) {
+          botDetectionIssue = true;
+        }
+        reject(new Error('Failed to get video info: Bot detection or other error'));
+      }
+    });
+
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      ytdlp.kill();
+      reject(new Error('Video info request timed out'));
+    }, 30000);
+  });
+};
+
+// Enhanced download with anti-detection measures
+const downloadVideo = (url, quality, downloadId) => {
+  return new Promise((resolve, reject) => {
+    if (!ytDlpAvailable) {
+      reject(new Error('yt-dlp not available'));
+      return;
+    }
+
+    directDownloadAttempts++;
+    console.log(`⬇️ Starting download with anti-detection (attempt ${directDownloadAttempts}): ${downloadId}`);
+    
+    const filename = `${downloadId}.%(ext)s`;
+    const outputPath = path.join(TEMP_DIR, filename);
+    
+    let args = [
+      '-o', outputPath,
+      '--newline',
+      '--no-warnings',
+      '--ignore-errors',
+      // Anti-detection measures
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      '--add-header', 'Accept-Language:en-US,en;q=0.9',
+      '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      '--sleep-interval', '1',
+      '--max-sleep-interval', '3',
+      // Retry mechanism
+      '--retries', '3',
+      '--fragment-retries', '3',
+      // Use different extractors
+      '--extractor-args', 'youtube:player_client=web',
+    ];
+    
+    // Quality settings
+    if (quality === 'audio') {
+      args.push('--extract-audio', '--audio-format', 'mp3');
+    } else if (quality !== 'best') {
+      args.push('-f', quality);
+    }
+    
+    args.push(url);
+    
+    const ytdlp = spawn(ytDlpPath, args);
+    
+    ytdlp.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log('yt-dlp output:', output);
+      
+      // Parse progress
+      const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
+      if (progressMatch) {
+        const progress = parseFloat(progressMatch[1]);
+        downloadStatus.set(downloadId, {
+          status: 'downloading',
+          progress: progress
+        });
+      }
+    });
+    
+    ytdlp.stderr.on('data', (data) => {
+      const error = data.toString();
+      console.error('Download stderr:', error);
+      
+      // Check for specific bot detection errors
+      if (error.includes('Sign in to confirm you\'re not a bot') || 
+          error.includes('bot') || 
+          error.includes('authentication')) {
+        console.log('🤖 Bot detection triggered during download');
+        botDetectionIssue = true;
+        downloadStatus.set(downloadId, { 
+          status: 'error', 
+          error: 'Bot detection triggered. Please use command generation instead.',
+          fallback: true,
+          botDetected: true
+        });
+      }
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code === 0) {
+        successfulDownloads++;
+        downloadStatus.set(downloadId, { status: 'completed' });
+        console.log(`✅ Download completed: ${downloadId} (${successfulDownloads}/${directDownloadAttempts} success rate)`);
+        resolve(downloadId);
+      } else {
+        const errorMsg = code === 1 && botDetectionIssue ? 
+          'Bot detection prevented download. Try command generation.' :
+          `Download failed (code ${code}). Try command generation instead.`;
+        
+        downloadStatus.set(downloadId, { 
+          status: 'error', 
+          error: errorMsg,
+          fallback: true,
+          botDetected: botDetectionIssue
+        });
+        reject(new Error(errorMsg));
+      }
+    });
+    
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      ytdlp.kill();
+      downloadStatus.set(downloadId, { 
+        status: 'error', 
+        error: 'Download timed out. Try command generation instead.',
+        fallback: true 
+      });
+      reject(new Error('Download timeout'));
+    }, 300000);
+  });
+};
+
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -202,31 +385,44 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
-    bot_detection_issue: botDetectionIssue
+    bot_detection_issue: botDetectionIssue,
+    download_stats: {
+      attempts: directDownloadAttempts,
+      successful: successfulDownloads,
+      success_rate: directDownloadAttempts > 0 ? (successfulDownloads / directDownloadAttempts * 100).toFixed(1) + '%' : 'N/A'
+    }
   });
 });
 
 app.get('/api/capabilities', (req, res) => {
+  const canTryDirectDownload = ytDlpAvailable && (!botDetectionIssue || successfulDownloads > 0);
+  
   res.json({
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
     bot_detection_issue: botDetectionIssue,
+    can_try_direct_download: canTryDirectDownload,
     features: {
-      video_info: !botDetectionIssue,
-      video_download: !botDetectionIssue,
+      video_info: ytDlpAvailable && !botDetectionIssue,
+      video_download: canTryDirectDownload,
       command_generation: true,
       basic_info: true
     },
+    download_stats: {
+      attempts: directDownloadAttempts,
+      successful: successfulDownloads,
+      success_rate: directDownloadAttempts > 0 ? (successfulDownloads / directDownloadAttempts * 100).toFixed(1) + '%' : 'N/A'
+    },
     limitations: botDetectionIssue ? [
-      'Server detected as bot by YouTube',
-      'Direct downloads may not work',
-      'Command generation fully functional',
-      'Users can run commands locally with authentication'
+      'YouTube bot detection detected',
+      'Direct downloads may fail',
+      'Command generation recommended',
+      'Success rate: ' + (directDownloadAttempts > 0 ? (successfulDownloads / directDownloadAttempts * 100).toFixed(1) + '%' : 'Unknown')
     ] : []
   });
 });
 
-// Generate command (always works)
+// Enhanced command generation with multiple bypass strategies
 app.post('/api/command', (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -235,38 +431,55 @@ app.post('/api/command', (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
     
-    let command = 'yt-dlp ';
-    
-    // Add common options for better success rate
-    command += '--no-warnings --ignore-errors ';
+    // Basic command
+    let baseCommand = 'yt-dlp ';
     
     if (quality === 'audio') {
-      command += '--extract-audio --audio-format mp3 ';
+      baseCommand += '--extract-audio --audio-format mp3 ';
     } else if (quality !== 'best') {
-      command += `-f "${quality}" `;
+      baseCommand += `-f "${quality}" `;
     }
     
-    command += '--output "%(title)s.%(ext)s" ';
-    command += `"${url}"`;
+    baseCommand += '--output "%(title)s.%(ext)s" ';
+    baseCommand += `"${url}"`;
     
-    // Generate alternative commands for different scenarios
-    const alternativeCommands = {
-      withCookies: command.replace('yt-dlp ', 'yt-dlp --cookies-from-browser chrome '),
-      withUserAgent: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" ')
+    // Generate enhanced commands with different bypass strategies
+    const enhancedCommands = {
+      basic: baseCommand,
+      
+      antiDetection: baseCommand.replace('yt-dlp ', 
+        'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --sleep-interval 1 '),
+      
+      withCookies: baseCommand.replace('yt-dlp ', 
+        'yt-dlp --cookies-from-browser chrome '),
+      
+      alternative: baseCommand.replace('yt-dlp ', 
+        'yt-dlp --extractor-args "youtube:player_client=web" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" '),
+      
+      aggressive: baseCommand.replace('yt-dlp ', 
+        'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --add-header "Accept-Language:en-US,en;q=0.9" --sleep-interval 2 --retries 5 --extractor-args "youtube:player_client=web" ')
     };
     
     res.json({
       success: true,
-      command: command,
-      message: 'Command generated successfully',
-      alternatives: alternativeCommands,
-      instructions: 'If the basic command fails due to bot detection, try the alternative commands with cookies or custom user agent.',
+      command: enhancedCommands.basic,
+      message: 'Multiple bypass strategies generated',
+      strategies: enhancedCommands,
+      recommended: botDetectionIssue ? 'antiDetection' : 'basic',
+      instructions: botDetectionIssue ? 
+        'Bot detection detected. Try "antiDetection" or "withCookies" commands first.' :
+        'Try commands in order: basic → antiDetection → withCookies → alternative → aggressive',
       troubleshooting: [
-        'Install yt-dlp: pip install yt-dlp',
-        'Basic usage: Copy and run the main command',
-        'If blocked: Try the "withCookies" command',
-        'For persistent issues: Use --cookies-from-browser firefox/chrome'
-      ]
+        '1. Install yt-dlp: pip install yt-dlp',
+        '2. Try recommended command first',
+        '3. If blocked, try "withCookies" version',
+        '4. For persistent issues: use "aggressive" strategy',
+        '5. Last resort: --cookies-from-browser firefox'
+      ],
+      server_stats: {
+        bot_detection: botDetectionIssue,
+        success_rate: directDownloadAttempts > 0 ? (successfulDownloads / directDownloadAttempts * 100).toFixed(1) + '%' : 'N/A'
+      }
     });
     
   } catch (error) {
@@ -289,7 +502,7 @@ app.post('/api/info', async (req, res) => {
       });
     }
     
-    // Always return basic info from URL
+    // Always try to get basic info first
     const basicInfo = getBasicVideoInfo(url);
     
     if (!ytDlpAvailable || botDetectionIssue) {
@@ -297,19 +510,29 @@ app.post('/api/info', async (req, res) => {
         success: true, 
         ...basicInfo,
         message: botDetectionIssue ? 
-          'Bot detection prevents detailed info. Command generation still works!' :
-          'Video info limited. Command generation available.'
+          'Bot detection limits video info. Command generation works!' :
+          'Basic video info only. Command generation available.'
       });
       return;
     }
     
-    // If yt-dlp is available and no bot issues, try to get real info
-    // But fallback gracefully if it fails
-    res.json({ 
-      success: true, 
-      ...basicInfo,
-      message: 'Ready for command generation'
-    });
+    // Try to get detailed info with anti-detection
+    try {
+      const detailedInfo = await getVideoInfo(url);
+      res.json({ 
+        success: true, 
+        ...detailedInfo,
+        message: 'Video info retrieved successfully'
+      });
+    } catch (error) {
+      // Fallback to basic info if detailed info fails
+      res.json({ 
+        success: true, 
+        ...basicInfo,
+        message: 'Using basic video info. Detailed info failed.',
+        error: error.message
+      });
+    }
     
   } catch (error) {
     console.error('Video info error:', error);
@@ -320,7 +543,7 @@ app.post('/api/info', async (req, res) => {
   }
 });
 
-// Start download (disabled due to bot detection)
+// Start download with hybrid approach
 app.post('/api/download', async (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -332,13 +555,37 @@ app.post('/api/download', async (req, res) => {
       });
     }
     
-    // Always redirect to command generation due to bot detection issues
-    res.status(503).json({ 
-      success: false, 
-      error: 'Direct download unavailable due to bot detection. Use command generation instead.',
-      fallback: true,
-      suggestion: 'Click "Generate Command" button for local download',
-      reason: 'YouTube detects server as bot and requires authentication'
+    const canTryDirectDownload = ytDlpAvailable && (!botDetectionIssue || successfulDownloads > 0);
+    
+    if (!canTryDirectDownload) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Direct download not recommended due to bot detection. Use command generation.',
+        fallback: true,
+        suggestion: 'Click "Generate Command" for reliable local download',
+        reason: 'YouTube bot detection active'
+      });
+    }
+    
+    const downloadId = uuidv4();
+    downloadStatus.set(downloadId, { status: 'starting' });
+    
+    // Start download in background with anti-detection
+    downloadVideo(url, quality, downloadId).catch(err => {
+      console.error('Download error:', err);
+      downloadStatus.set(downloadId, { 
+        status: 'error', 
+        error: err.message,
+        fallback: true,
+        botDetected: botDetectionIssue
+      });
+    });
+    
+    res.json({ 
+      success: true, 
+      downloadId,
+      message: 'Download started with anti-detection measures',
+      warning: botDetectionIssue ? 'Bot detection detected. Download may fail.' : null
     });
     
   } catch (error) {
@@ -349,19 +596,93 @@ app.post('/api/download', async (req, res) => {
   }
 });
 
-// Check download status (not used due to bot detection)
+// Check download status
 app.get('/api/status/:downloadId', (req, res) => {
-  res.status(503).json({ 
-    error: 'Direct download not available due to bot detection issues' 
-  });
+  const { downloadId } = req.params;
+  const status = downloadStatus.get(downloadId);
+  
+  if (!status) {
+    return res.status(404).json({ 
+      error: 'Download not found' 
+    });
+  }
+  
+  res.json(status);
 });
 
-// Download file (not used due to bot detection)
+// Download file
 app.get('/api/file/:downloadId', async (req, res) => {
-  res.status(503).json({ 
-    error: 'Direct download not available due to bot detection issues' 
-  });
+  try {
+    const { downloadId } = req.params;
+    const status = downloadStatus.get(downloadId);
+    
+    if (!status || status.status !== 'completed') {
+      return res.status(404).json({ 
+        error: 'File not ready' 
+      });
+    }
+    
+    // Find the downloaded file
+    const files = await fs.readdir(TEMP_DIR);
+    const downloadedFile = files.find(file => file.startsWith(downloadId));
+    
+    if (!downloadedFile) {
+      return res.status(404).json({ 
+        error: 'File not found' 
+      });
+    }
+    
+    const filePath = path.join(TEMP_DIR, downloadedFile);
+    const stats = await fs.stat(filePath);
+    
+    // Set headers for download
+    const cleanFilename = downloadedFile.replace(downloadId + '.', '');
+    res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
+    res.setHeader('Content-Length', stats.size);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    
+    // Stream the file
+    const fileStream = require('fs').createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    // Cleanup after download
+    fileStream.on('end', async () => {
+      try {
+        await fs.unlink(filePath);
+        downloadStatus.delete(downloadId);
+        console.log(`🧹 Cleaned up: ${downloadedFile}`);
+      } catch (err) {
+        console.error('Cleanup error:', err);
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
 });
+
+// Cleanup old downloads every hour
+setInterval(async () => {
+  try {
+    const files = await fs.readdir(TEMP_DIR);
+    const now = Date.now();
+    
+    for (const file of files) {
+      const filePath = path.join(TEMP_DIR, file);
+      const stats = await fs.stat(filePath);
+      
+      // Delete files older than 1 hour
+      if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
+        await fs.unlink(filePath);
+        console.log(`🧹 Auto-cleaned: ${file}`);
+      }
+    }
+  } catch (error) {
+    console.error('Auto-cleanup error:', error);
+  }
+}, 60 * 60 * 1000);
 
 // Serve main app
 app.get('*', (req, res) => {
@@ -370,7 +691,7 @@ app.get('*', (req, res) => {
 
 // Initialize server with quick startup
 const startServer = async () => {
-  console.log('🚀 Starting YouTube Direct Downloader...');
+  console.log('🚀 Starting YouTube Downloader with Hybrid Anti-Detection...');
   
   // Start server immediately
   const server = app.listen(port, () => {
@@ -385,10 +706,11 @@ const startServer = async () => {
       await tryInstallYtDlp();
       
       if (botDetectionIssue) {
-        console.log(`🤖 Bot detection detected - Command generation mode recommended`);
-        console.log(`💡 Users should run commands locally for best results`);
+        console.log(`🤖 Bot detection detected - Hybrid mode enabled`);
+        console.log(`💡 Direct downloads may work with anti-detection measures`);
+        console.log(`📋 Command generation is the reliable fallback`);
       } else {
-        console.log(`📱 yt-dlp status: ${ytDlpAvailable ? 'Available' : 'Command generation mode'}`);
+        console.log(`📱 yt-dlp status: ${ytDlpAvailable ? 'Available with anti-detection' : 'Command generation mode'}`);
       }
     } catch (error) {
       console.log('⚠️  Background setup completed with limitations');
