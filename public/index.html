@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>YouTube Direct Downloader</title>
+    <meta name="theme-color" content="#e74c3c">
+    <meta name="description" content="Download YouTube videos directly to your device">
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 15px;
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            min-height: 100vh;
+            color: #2c3e50;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin: 0;
+            color: #e74c3c;
+            font-weight: 700;
+        }
+        
+        .header p {
+            margin: 8px 0 0 0;
+            color: #7f8c8d;
+            font-size: 0.95em;
+        }
+        
+        .url-section {
+            margin-bottom: 20px;
+        }
+        
+        .url-input {
+            width: 100%;
+            padding: 18px;
+            border: 2px solid #ecf0f1;
+            border-radius: 15px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+        
+        .url-input:focus {
+            outline: none;
+            border-color: #e74c3c;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+        }
+        
+        .video-preview {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+            border-left: 4px solid #e74c3c;
+        }
+        
+        .video-preview.show {
+            display: block;
+            animation: slideIn 0.4s ease;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .video-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-size: 1.05em;
+            line-height: 1.4;
+        }
+        
+        .video-meta {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .quality-section {
+            margin: 25px 0;
+        }
+        
+        .section-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .quality-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        
+        .quality-option {
+            padding: 16px 14px;
+            border: 2px solid #ecf0f1;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            font-weight: 600;
+            background: white;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .quality-option::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(231, 76, 60, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+        
+        .quality-option:hover::before {
+            left: 100%;
+        }
+        
+        .quality-option.selected {
+            border-color: #e74c3c;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(231, 76, 60, 0.3);
+        }
+        
+        .download-btn {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            color: white;
+            border: none;
+            border-radius: 15px;
+            font-size: 17px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 25px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .download-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.6s ease;
+        }
+        
+        .download-btn:hover::before {
+            left: 100%;
+        }
+        
+        .download-btn:active {
+            transform: scale(0.98);
+        }
+        
+        .download-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .progress-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+            border: 2px solid #e9ecef;
+        }
+        
+        .progress-section.show {
+            display: block;
+            animation: slideIn 0.4s ease;
+        }
+        
+        .progress-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 15px 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2980b9);
+            transition: width 0.3s ease;
+            width: 0%;
+            border-radius: 6px;
+            position: relative;
+        }
+        
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        .progress-text {
+            text-align: center;
+            font-weight: 500;
+            color: #495057;
+            margin-top: 10px;
+        }
+        
+        .download-ready {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-radius: 15px;
+            margin-top: 15px;
+            border: 2px solid #28a745;
+        }
+        
+        .download-link {
+            display: inline-block;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 700;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+        
+        .download-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        }
+        
+        .error-message {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            color: #721c24;
+            padding: 15px;
+            border-radius: 12px;
+            margin: 15px 0;
+            border-left: 4px solid #dc3545;
+            font-weight: 500;
+        }
+        
+        .info-banner {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 2px solid #ffc107;
+            border-radius: 15px;
+            padding: 18px;
+            margin-bottom: 25px;
+            border-left: 4px solid #ff6b35;
+        }
+        
+        .info-banner h3 {
+            margin: 0 0 10px 0;
+            color: #856404;
+            font-size: 1.1em;
+        }
+        
+        .info-banner p {
+            margin: 0;
+            color: #856404;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+        
+        @media (max-width: 480px) {
+            .quality-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container {
+                padding: 20px;
+                margin: 10px;
+            }
+            
+            .header h1 {
+                font-size: 1.7em;
+            }
+            
+            .video-meta {
+                flex-direction: column;
+                gap: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 YouTube Direct</h1>
+            <p>Download videos directly to your device!</p>
+        </div>
+        
+        <div class="info-banner">
+            <h3>🚀 How it works:</h3>
+            <p>Paste any YouTube URL, select quality, and download directly to your device. No apps or software needed!</p>
+        </div>
+        
+        <form id="downloadForm">
+            <div class="url-section">
+                <input type="url" class="url-input" id="videoUrl" 
+                       placeholder="Paste YouTube URL here (e.g., https://youtube.com/watch?v=...)" required>
+            </div>
+            
+            <div class="video-preview" id="videoPreview">
+                <div class="video-title" id="videoTitle"></div>
+                <div class="video-meta">
+                    <span id="videoUploader"></span>
+                    <span id="videoDuration"></span>
+                </div>
+            </div>
+            
+            <div class="quality-section">
+                <div class="section-title">📊 Choose Quality</div>
+                <div class="quality-grid">
+                    <div class="quality-option selected" data-quality="best" onclick="selectQuality('best')">
+                        🎬 Best Quality
+                    </div>
+                    <div class="quality-option" data-quality="720p" onclick="selectQuality('720p')">
+                        📺 720p HD
+                    </div>
+                    <div class="quality-option" data-quality="480p" onclick="selectQuality('480p')">
+                        📱 480p
+                    </div>
+                    <div class="quality-option" data-quality="audio" onclick="selectQuality('audio')">
+                        🎵 Audio Only
+                    </div>
+                </div>
+            </div>
+            
+            <button type="submit" class="download-btn" id="downloadBtn">
+                🚀 Start Download
+            </button>
+        </form>
+        
+        <div class="progress-section" id="progressSection">
+            <div class="progress-title" id="progressTitle">Preparing download...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">0%</div>
+            <div id="downloadReadySection"></div>
+        </div>
+    </div>
+
+    <script>
+        let selectedQuality = 'best';
+        let downloadInterval;
+        
+        function selectQuality(quality) {
+            document.querySelectorAll('.quality-option').forEach(opt => 
+                opt.classList.remove('selected')
+            );
+            event.target.classList.add('selected');
+            selectedQuality = quality === 'audio' ? 'audio' : 
+                           quality === '720p' ? 'best[height<=720]' :
+                           quality === '480p' ? 'best[height<=480]' : 'best';
+        }
+        
+        // Auto-fetch video info when URL is pasted
+        document.getElementById('videoUrl').addEventListener('input', debounce(async (e) => {
+            const url = e.target.value.trim();
+            if (url.length > 20 && url.includes('youtube.com')) {
+                await fetchVideoInfo(url);
+            }
+        }, 1000));
+        
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+        
+        async function fetchVideoInfo(url) {
+            try {
+                const response = await fetch('/api/info', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('videoTitle').textContent = data.title;
+                    document.getElementById('videoUploader').textContent = `📺 ${data.uploader}`;
+                    document.getElementById('videoDuration').textContent = 
+                        `⏱️ ${Math.floor(data.duration/60)}:${(data.duration%60).toString().padStart(2,'0')}`;
+                    document.getElementById('videoPreview').classList.add('show');
+                } else {
+                    showError('Could not fetch video info. Please check the URL.');
+                }
+            } catch (error) {
+                console.error('Error fetching video info:', error);
+            }
+        }
+        
+        function showError(message) {
+            const existingError = document.querySelector('.error-message');
+            if (existingError) existingError.remove();
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            document.querySelector('.container').appendChild(errorDiv);
+            
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+        
+        // Handle form submission
+        document.getElementById('downloadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const url = document.getElementById('videoUrl').value.trim();
+            if (!url) return;
+            
+            const downloadBtn = document.getElementById('downloadBtn');
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = '🔄 Starting Download...';
+            
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, quality: selectedQuality })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showProgressSection();
+                    monitorDownload(data.downloadId);
+                } else {
+                    throw new Error(data.error);
+                }
+                
+            } catch (error) {
+                showError('Download failed: ' + error.message);
+                resetDownloadButton();
+            }
+        });
+        
+        function showProgressSection() {
+            document.getElementById('progressSection').classList.add('show');
+            document.getElementById('progressSection').scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function monitorDownload(downloadId) {
+            downloadInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/status/${downloadId}`);
+                    const status = await response.json();
+                    
+                    updateProgress(status, downloadId);
+                    
+                    if (status.status === 'completed' || status.status === 'error') {
+                        clearInterval(downloadInterval);
+                        resetDownloadButton();
+                    }
+                    
+                } catch (error) {
+                    console.error('Status check error:', error);
+                    clearInterval(downloadInterval);
+                    resetDownloadButton();
+                }
+            }, 2000);
+        }
+        
+        function updateProgress(status, downloadId) {
+            const title = document.getElementById('progressTitle');
+            const fill = document.getElementById('progressFill');
+            const text = document.getElementById('progressText');
+            const readySection = document.getElementById('downloadReadySection');
+            
+            if (status.status === 'starting') {
+                title.textContent = 'Initializing download...';
+                fill.style.width = '10%';
+                text.textContent = 'Starting...';
+            } else if (status.status === 'downloading') {
+                title.textContent = 'Downloading video...';
+                const progress = status.progress || 0;
+                fill.style.width = `${progress}%`;
+                text.textContent = `${Math.round(progress)}%`;
+            } else if (status.status === 'completed') {
+                title.textContent = '✅ Download Complete!';
+                fill.style.width = '100%';
+                text.textContent = '100%';
+                
+                readySection.innerHTML = `
+                    <div class="download-ready">
+                        <h3>🎉 Your video is ready!</h3>
+                        <a href="/api/file/${downloadId}" class="download-link" download>
+                            📥 Download to Device
+                        </a>
+                    </div>
+                `;
+            } else if (status.status === 'error') {
+                title.textContent = '❌ Download Failed';
+                fill.style.width = '0%';
+                text.textContent = 'Error occurred';
+                showError(status.error || 'Download failed. Please try again.');
+            }
+        }
+        
+        function resetDownloadButton() {
+            const downloadBtn = document.getElementById('downloadBtn');
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '🚀 Start Download';
+        }
+        
+        // Auto-paste from clipboard on page load
+        window.addEventListener('load', async () => {
+            try {
+                if (navigator.clipboard) {
+                    const clipboardText = await navigator.clipboard.readText();
+                    if (clipboardText.includes('youtube.com') || clipboardText.includes('youtu.be')) {
+                        document.getElementById('videoUrl').value = clipboardText;
+                        await fetchVideoInfo(clipboardText);
+                    }
+                }
+            } catch (error) {
+                // Clipboard access failed, ignore
+            }
+        });
+    </script>
+</body>
+</html>

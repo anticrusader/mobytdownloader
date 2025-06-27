@@ -1,0 +1,23 @@
+{
+  "name": "youtube-direct-downloader",
+  "version": "1.0.0",
+  "description": "Direct YouTube video downloader with server-side yt-dlp",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "compression": "^1.7.4",
+    "helmet": "^7.0.0",
+    "uuid": "^9.0.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["youtube", "downloader", "yt-dlp", "direct-download"],
+  "author": "Your Name",
+  "license": "MIT"
+}
