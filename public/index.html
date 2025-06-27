@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>YouTube Direct Downloader</title>
+    <title>YouTube Command Generator</title>
     <meta name="theme-color" content="#e74c3c">
-    <meta name="description" content="Download YouTube videos directly or generate commands">
+    <meta name="description" content="Generate yt-dlp commands for YouTube downloads">
     <style>
         * {
             box-sizing: border-box;
@@ -51,7 +51,7 @@
         }
         
         .mode-indicator {
-            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
             color: white;
             padding: 12px;
             border-radius: 12px;
@@ -61,8 +61,8 @@
             font-size: 0.9em;
         }
         
-        .mode-indicator.fallback {
-            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+        .mode-indicator.command-mode {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
         }
         
         .url-section {
@@ -92,7 +92,7 @@
             padding: 20px;
             margin: 20px 0;
             display: none;
-            border-left: 4px solid #e74c3c;
+            border-left: 4px solid #3498db;
         }
         
         .video-preview.show {
@@ -153,11 +153,11 @@
         }
         
         .quality-option.selected {
-            border-color: #e74c3c;
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            border-color: #3498db;
+            background: linear-gradient(135deg, #3498db, #2980b9);
             color: white;
             transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(231, 76, 60, 0.3);
+            box-shadow: 0 8px 20px rgba(52, 152, 219, 0.3);
         }
         
         .action-buttons {
@@ -182,11 +182,12 @@
         }
         
         .download-btn.primary {
-            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
         }
         
         .download-btn.secondary {
-            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+            display: none;
         }
         
         .download-btn:active {
@@ -197,52 +198,6 @@
             opacity: 0.7;
             cursor: not-allowed;
             transform: none;
-        }
-        
-        .progress-section {
-            background: #f8f9fa;
-            border-radius: 15px;
-            padding: 20px;
-            margin: 20px 0;
-            display: none;
-            border: 2px solid #e9ecef;
-        }
-        
-        .progress-section.show {
-            display: block;
-            animation: slideIn 0.4s ease;
-        }
-        
-        .progress-title {
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 15px;
-            text-align: center;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 12px;
-            background: #e9ecef;
-            border-radius: 6px;
-            overflow: hidden;
-            margin: 15px 0;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #3498db, #2980b9);
-            transition: width 0.3s ease;
-            width: 0%;
-            border-radius: 6px;
-        }
-        
-        .progress-text {
-            text-align: center;
-            font-weight: 500;
-            color: #495057;
-            margin-top: 10px;
         }
         
         .command-output {
@@ -286,6 +241,33 @@
             border-color: #3498db;
         }
         
+        .alternatives {
+            margin-top: 20px;
+            padding: 15px;
+            background: #34495e;
+            border-radius: 10px;
+        }
+        
+        .alternatives h4 {
+            color: #f39c12;
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        
+        .alt-command {
+            background: #2c3e50;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 8px 0;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            font-size: 12px;
+        }
+        
+        .alt-command:hover {
+            background: #3e566b;
+        }
+        
         .command-instructions {
             color: #bdc3c7;
             font-size: 12px;
@@ -310,33 +292,6 @@
             opacity: 1;
         }
         
-        .download-ready {
-            text-align: center;
-            padding: 20px;
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            border-radius: 15px;
-            margin-top: 15px;
-            border: 2px solid #28a745;
-        }
-        
-        .download-link {
-            display: inline-block;
-            padding: 15px 30px;
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 12px;
-            font-weight: 700;
-            margin-top: 15px;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
-        }
-        
-        .download-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
-        }
-        
         .error-message {
             background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
             color: #721c24;
@@ -348,6 +303,28 @@
         }
         
         .info-banner {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border: 2px solid #28a745;
+            border-radius: 15px;
+            padding: 18px;
+            margin-bottom: 25px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .info-banner h3 {
+            margin: 0 0 10px 0;
+            color: #155724;
+            font-size: 1.1em;
+        }
+        
+        .info-banner p {
+            margin: 0;
+            color: #155724;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+        
+        .limitation-notice {
             background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
             border: 2px solid #ffc107;
             border-radius: 15px;
@@ -356,13 +333,13 @@
             border-left: 4px solid #ff6b35;
         }
         
-        .info-banner h3 {
+        .limitation-notice h3 {
             margin: 0 0 10px 0;
             color: #856404;
             font-size: 1.1em;
         }
         
-        .info-banner p {
+        .limitation-notice p {
             margin: 0;
             color: #856404;
             font-size: 0.95em;
@@ -393,17 +370,22 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 YouTube Direct</h1>
-            <p>Download videos or generate commands!</p>
+            <h1>📋 YouTube Commands</h1>
+            <p>Generate yt-dlp commands for any YouTube video!</p>
         </div>
         
-        <div class="mode-indicator" id="modeIndicator">
-            🔍 Checking server capabilities...
+        <div class="mode-indicator command-mode" id="modeIndicator">
+            📋 Command Generation Mode - Create commands to run locally!
         </div>
         
         <div class="info-banner">
             <h3>🚀 How it works:</h3>
-            <p>Paste any YouTube URL and either download directly to your device or generate a command to run locally!</p>
+            <p>Paste any YouTube URL, select quality, and get an instant yt-dlp command. Copy and run it on your device with yt-dlp installed!</p>
+        </div>
+        
+        <div class="limitation-notice" id="limitationNotice" style="display: none;">
+            <h3>⚠️ Server Limitations:</h3>
+            <p>YouTube's bot detection prevents server-side downloads. Command generation works perfectly for local downloads!</p>
         </div>
         
         <form id="downloadForm">
@@ -439,42 +421,50 @@
             </div>
             
             <div class="action-buttons">
-                <button type="submit" class="download-btn primary" id="downloadBtn" style="display: none;">
-                    🚀 Start Download
+                <button type="button" class="download-btn primary" id="commandBtn" onclick="generateCommand()">
+                    📋 Generate yt-dlp Command
                 </button>
-                <button type="button" class="download-btn secondary" id="commandBtn" onclick="generateCommand()">
-                    📋 Generate Command
+                <button type="submit" class="download-btn secondary" id="downloadBtn" style="display: none;">
+                    🚀 Try Direct Download
                 </button>
             </div>
         </form>
         
-        <div class="progress-section" id="progressSection">
-            <div class="progress-title" id="progressTitle">Preparing download...</div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-text" id="progressText">0%</div>
-            <div id="downloadReadySection"></div>
-        </div>
-        
         <div class="command-output" id="commandOutput">
-            <div class="command-header">📋 Command Ready:</div>
+            <div class="command-header">📋 Your yt-dlp Command:</div>
             <div class="command-text" id="commandText" onclick="copyCommand()"></div>
             <div class="copy-indicator" id="copyIndicator">Copied! ✓</div>
+            
+            <div class="alternatives" id="alternatives" style="display: none;">
+                <h4>🛠️ Alternative Commands (if main command fails):</h4>
+                <div class="alt-command" id="withCookies" onclick="copyAltCommand('withCookies')">
+                    With Browser Cookies (recommended for login-required videos)
+                </div>
+                <div class="alt-command" id="withUserAgent" onclick="copyAltCommand('withUserAgent')">
+                    With Custom User Agent (helps avoid detection)
+                </div>
+            </div>
+            
             <div class="command-instructions">
-                <strong>Instructions:</strong><br>
+                <strong>Quick Setup:</strong><br>
                 1. Install yt-dlp: <code>pip install yt-dlp</code><br>
-                2. Copy the command above (tap to copy)<br>
-                3. Paste and run in your terminal<br>
-                4. Video will download to current directory
+                2. Copy command above (tap to copy)<br>
+                3. Open terminal/command prompt<br>
+                4. Paste and press Enter<br>
+                5. Video downloads to current folder!<br><br>
+                
+                <strong>Troubleshooting:</strong><br>
+                • If blocked: Try alternative commands above<br>
+                • For private videos: Use "With Browser Cookies" version<br>
+                • Need help? Check <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" style="color: #3498db;">yt-dlp documentation</a>
             </div>
         </div>
     </div>
 
     <script>
         let selectedQuality = 'best';
-        let downloadInterval;
         let serverCapabilities = null;
+        let currentCommandData = null;
         
         // Check server capabilities on load
         async function checkServerCapabilities() {
@@ -482,36 +472,40 @@
                 const response = await fetch('/api/capabilities');
                 const data = await response.json();
                 serverCapabilities = data;
-                updateModeIndicator(data);
-                updateButtons(data);
+                updateInterface(data);
             } catch (error) {
                 console.error('Error checking capabilities:', error);
-                updateModeIndicator({ ytdlp_available: false, features: { command_generation: true } });
-                updateButtons({ ytdlp_available: false, features: { command_generation: true } });
+                // Default to command generation mode
+                updateInterface({ 
+                    ytdlp_available: false, 
+                    bot_detection_issue: true,
+                    features: { command_generation: true } 
+                });
             }
         }
         
-        function updateModeIndicator(capabilities) {
-            const indicator = document.getElementById('modeIndicator');
-            if (capabilities.ytdlp_available) {
-                indicator.textContent = '🎯 Direct Download Mode - Server ready for downloads!';
-                indicator.classList.remove('fallback');
-            } else {
-                indicator.textContent = '📋 Command Generation Mode - Generate commands to run locally';
-                indicator.classList.add('fallback');
-            }
-        }
-        
-        function updateButtons(capabilities) {
+        function updateInterface(capabilities) {
+            const modeIndicator = document.getElementById('modeIndicator');
+            const limitationNotice = document.getElementById('limitationNotice');
             const downloadBtn = document.getElementById('downloadBtn');
             const commandBtn = document.getElementById('commandBtn');
             
-            if (capabilities.ytdlp_available) {
+            if (capabilities.bot_detection_issue) {
+                modeIndicator.textContent = '🤖 Bot Detection - Command Generation Mode (Recommended)';
+                modeIndicator.className = 'mode-indicator';
+                limitationNotice.style.display = 'block';
+                downloadBtn.style.display = 'none';
+                commandBtn.textContent = '📋 Generate yt-dlp Command';
+            } else if (capabilities.ytdlp_available) {
+                modeIndicator.textContent = '🎯 Direct Download Available + Command Generation';
+                modeIndicator.className = 'mode-indicator command-mode';
                 downloadBtn.style.display = 'block';
                 commandBtn.textContent = '📋 Generate Command (Alternative)';
             } else {
+                modeIndicator.textContent = '📋 Command Generation Mode';
+                modeIndicator.className = 'mode-indicator command-mode';
                 downloadBtn.style.display = 'none';
-                commandBtn.textContent = '📋 Generate Download Command';
+                commandBtn.textContent = '📋 Generate yt-dlp Command';
             }
         }
         
@@ -546,15 +540,6 @@
         }
         
         async function fetchVideoInfo(url) {
-            if (!serverCapabilities?.ytdlp_available) {
-                // Show basic preview for command generation mode
-                document.getElementById('videoTitle').textContent = 'URL detected - Ready to generate command';
-                document.getElementById('videoUploader').textContent = '📺 Command will include video info';
-                document.getElementById('videoDuration').textContent = '⚡ Fast command generation';
-                document.getElementById('videoPreview').classList.add('show');
-                return;
-            }
-            
             try {
                 const response = await fetch('/api/info', {
                     method: 'POST',
@@ -567,22 +552,37 @@
                 if (data.success) {
                     document.getElementById('videoTitle').textContent = data.title;
                     document.getElementById('videoUploader').textContent = `📺 ${data.uploader}`;
-                    document.getElementById('videoDuration').textContent = 
-                        `⏱️ ${Math.floor(data.duration/60)}:${(data.duration%60).toString().padStart(2,'0')}`;
-                    document.getElementById('videoPreview').classList.add('show');
-                } else if (data.fallback) {
-                    // Server doesn't have yt-dlp, show fallback info
-                    document.getElementById('videoTitle').textContent = 'Video URL ready for command generation';
-                    document.getElementById('videoUploader').textContent = '📋 Generate command to download locally';
-                    document.getElementById('videoDuration').textContent = '⚡ Fast and reliable';
+                    
+                    if (data.duration > 0) {
+                        document.getElementById('videoDuration').textContent = 
+                            `⏱️ ${Math.floor(data.duration/60)}:${(data.duration%60).toString().padStart(2,'0')}`;
+                    } else {
+                        document.getElementById('videoDuration').textContent = '⚡ Ready for download';
+                    }
+                    
                     document.getElementById('videoPreview').classList.add('show');
                 } else {
-                    showError('Could not fetch video info. URL might be invalid.');
+                    showBasicPreview(url);
                 }
             } catch (error) {
                 console.error('Error fetching video info:', error);
-                showError('Error fetching video info. You can still generate a download command.');
+                showBasicPreview(url);
             }
+        }
+        
+        function showBasicPreview(url) {
+            const videoId = extractVideoId(url);
+            document.getElementById('videoTitle').textContent = videoId ? 
+                `YouTube Video (${videoId})` : 'YouTube Video Ready';
+            document.getElementById('videoUploader').textContent = '📺 YouTube';
+            document.getElementById('videoDuration').textContent = '⚡ Ready for command generation';
+            document.getElementById('videoPreview').classList.add('show');
+        }
+        
+        function extractVideoId(url) {
+            const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/;
+            const match = url.match(regex);
+            return match ? match[1] : null;
         }
         
         async function generateCommand() {
@@ -607,11 +607,20 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    currentCommandData = data;
                     document.getElementById('commandText').textContent = data.command;
+                    
+                    // Show alternatives if available
+                    if (data.alternatives) {
+                        document.getElementById('withCookies').textContent = data.alternatives.withCookies;
+                        document.getElementById('withUserAgent').textContent = data.alternatives.withUserAgent;
+                        document.getElementById('alternatives').style.display = 'block';
+                    }
+                    
                     document.getElementById('commandOutput').classList.add('show');
                     document.getElementById('commandOutput').scrollIntoView({ behavior: 'smooth' });
                     
-                    // Auto-copy to clipboard
+                    // Auto-copy main command to clipboard
                     await copyToClipboard(data.command);
                 } else {
                     showError('Failed to generate command: ' + data.error);
@@ -642,6 +651,19 @@
             await copyToClipboard(command);
         }
         
+        async function copyAltCommand(type) {
+            let command;
+            if (type === 'withCookies') {
+                command = document.getElementById('withCookies').textContent;
+            } else if (type === 'withUserAgent') {
+                command = document.getElementById('withUserAgent').textContent;
+            }
+            
+            if (command) {
+                await copyToClipboard(command);
+            }
+        }
+        
         async function copyToClipboard(text) {
             try {
                 await navigator.clipboard.writeText(text);
@@ -653,114 +675,13 @@
             }
         }
         
-        // Handle direct download form submission (only if server supports it)
+        // Handle direct download form submission (fallback)
         document.getElementById('downloadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            if (!serverCapabilities?.ytdlp_available) {
-                generateCommand();
-                return;
-            }
-            
-            const url = document.getElementById('videoUrl').value.trim();
-            if (!url) return;
-            
-            const downloadBtn = document.getElementById('downloadBtn');
-            downloadBtn.disabled = true;
-            downloadBtn.textContent = '🔄 Starting Download...';
-            
-            try {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, quality: selectedQuality })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showProgressSection();
-                    monitorDownload(data.downloadId);
-                } else if (data.fallback) {
-                    showError('Direct download not available. Generating command instead...');
-                    setTimeout(generateCommand, 1000);
-                } else {
-                    throw new Error(data.error);
-                }
-                
-            } catch (error) {
-                showError('Download failed: ' + error.message);
-                resetDownloadButton();
-            }
+            // Always use command generation as primary method
+            generateCommand();
         });
-        
-        function showProgressSection() {
-            document.getElementById('progressSection').classList.add('show');
-            document.getElementById('progressSection').scrollIntoView({ behavior: 'smooth' });
-        }
-        
-        function monitorDownload(downloadId) {
-            downloadInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/status/${downloadId}`);
-                    const status = await response.json();
-                    
-                    updateProgress(status, downloadId);
-                    
-                    if (status.status === 'completed' || status.status === 'error') {
-                        clearInterval(downloadInterval);
-                        resetDownloadButton();
-                    }
-                    
-                } catch (error) {
-                    console.error('Status check error:', error);
-                    clearInterval(downloadInterval);
-                    resetDownloadButton();
-                }
-            }, 2000);
-        }
-        
-        function updateProgress(status, downloadId) {
-            const title = document.getElementById('progressTitle');
-            const fill = document.getElementById('progressFill');
-            const text = document.getElementById('progressText');
-            const readySection = document.getElementById('downloadReadySection');
-            
-            if (status.status === 'starting') {
-                title.textContent = 'Initializing download...';
-                fill.style.width = '10%';
-                text.textContent = 'Starting...';
-            } else if (status.status === 'downloading') {
-                title.textContent = 'Downloading video...';
-                const progress = status.progress || 0;
-                fill.style.width = `${progress}%`;
-                text.textContent = `${Math.round(progress)}%`;
-            } else if (status.status === 'completed') {
-                title.textContent = '✅ Download Complete!';
-                fill.style.width = '100%';
-                text.textContent = '100%';
-                
-                readySection.innerHTML = `
-                    <div class="download-ready">
-                        <h3>🎉 Your video is ready!</h3>
-                        <a href="/api/file/${downloadId}" class="download-link" download>
-                            📥 Download to Device
-                        </a>
-                    </div>
-                `;
-            } else if (status.status === 'error') {
-                title.textContent = '❌ Download Failed';
-                fill.style.width = '0%';
-                text.textContent = 'Error occurred';
-                showError(status.error || 'Download failed. Try generating a command instead.');
-            }
-        }
-        
-        function resetDownloadButton() {
-            const downloadBtn = document.getElementById('downloadBtn');
-            downloadBtn.disabled = false;
-            downloadBtn.textContent = '🚀 Start Download';
-        }
         
         // Initialize app
         window.addEventListener('load', async () => {
