@@ -201,181 +201,350 @@ const getBasicVideoInfo = (url) => {
 
 // Enhanced video info with anti-detection
 const getVideoInfo = (url) => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!ytDlpAvailable) {
       reject(new Error('yt-dlp not available'));
       return;
     }
 
-    console.log(`🔍 Getting video info with anti-detection: ${url}`);
+    console.log(`🔍 Getting video info with enhanced anti-detection: ${url}`);
     
-    const ytdlp = spawn(ytDlpPath, [
-      '--dump-json', 
-      '--no-download',
-      '--no-warnings',
-      '--ignore-errors',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--extractor-args', 'youtube:player_client=web',
-      url
-    ]);
-    
-    let data = '';
-    let errorData = '';
-    
-    ytdlp.stdout.on('data', (chunk) => {
-      data += chunk;
-    });
-    
-    ytdlp.stderr.on('data', (chunk) => {
-      errorData += chunk;
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0 && data.trim()) {
-        try {
-          const info = JSON.parse(data.trim());
-          resolve({
-            title: info.title || 'Unknown Title',
-            duration: info.duration || 0,
-            uploader: info.uploader || 'Unknown Uploader',
-            view_count: info.view_count || 0,
-            thumbnail: info.thumbnail || '',
-            webpage_url: info.webpage_url || url
-          });
-        } catch (parseError) {
-          console.error('JSON parse error:', parseError);
-          reject(new Error('Invalid video data received'));
-        }
-      } else {
-        console.error('Video info error:', errorData);
-        if (errorData.includes('Sign in to confirm') || 
-            errorData.includes('bot') || 
-            errorData.includes('authentication')) {
-          botDetectionIssue = true;
-        }
-        reject(new Error('Failed to get video info: Bot detection or other error'));
+    // Multiple strategies to try in order
+    const strategies = [
+      {
+        name: 'web_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          '--add-header', 'Accept-Language:en-US,en;q=0.9',
+          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          '--extractor-args', 'youtube:player_client=web',
+          url
+        ]
+      },
+      {
+        name: 'android_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+          '--extractor-args', 'youtube:player_client=android',
+          url
+        ]
+      },
+      {
+        name: 'ios_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.ios.youtube/17.36.4 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
+          '--extractor-args', 'youtube:player_client=ios',
+          url
+        ]
+      },
+      {
+        name: 'tv_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--extractor-args', 'youtube:player_client=tv_embedded',
+          url
+        ]
       }
-    });
+    ];
+    
+    // Try each strategy
+    for (const strategy of strategies) {
+      try {
+        console.log(`🔧 Trying ${strategy.name} strategy...`);
+        
+        const info = await new Promise((strategyResolve, strategyReject) => {
+          const ytdlp = spawn(ytDlpPath, strategy.args);
+          let data = '';
+          let errorData = '';
+          
+          ytdlp.stdout.on('data', (chunk) => {
+            data += chunk;
+          });
+          
+          ytdlp.stderr.on('data', (chunk) => {
+            errorData += chunk;
+          });
+          
+          ytdlp.on('close', (code) => {
+            if (code === 0 && data.trim()) {
+              try {
+                const parsed = JSON.parse(data.trim());
+                strategyResolve(parsed);
+              } catch (parseError) {
+                strategyReject(new Error('Parse error: ' + parseError.message));
+              }
+            } else {
+              strategyReject(new Error(`Strategy failed: ${errorData}`));
+            }
+          });
 
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      ytdlp.kill();
-      reject(new Error('Video info request timed out'));
-    }, 30000);
+          // Timeout for each strategy
+          setTimeout(() => {
+            ytdlp.kill();
+            strategyReject(new Error('Strategy timeout'));
+          }, 20000);
+        });
+        
+        // Success! Return the info
+        console.log(`✅ ${strategy.name} strategy succeeded`);
+        resolve({
+          title: info.title || 'Unknown Title',
+          duration: info.duration || 0,
+          uploader: info.uploader || 'Unknown Uploader',
+          view_count: info.view_count || 0,
+          thumbnail: info.thumbnail || '',
+          webpage_url: info.webpage_url || url,
+          strategy_used: strategy.name
+        });
+        return;
+        
+      } catch (error) {
+        console.log(`❌ ${strategy.name} failed:`, error.message);
+        continue;
+      }
+    }
+    
+    // All strategies failed
+    console.log('🤖 All anti-detection strategies failed - bot detection confirmed');
+    botDetectionIssue = true;
+    reject(new Error('All anti-detection strategies failed'));
   });
 };
 
-// Enhanced download with anti-detection measures
+
+// Enhanced download with multiple strategies
 const downloadVideo = (url, quality, downloadId) => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!ytDlpAvailable) {
       reject(new Error('yt-dlp not available'));
       return;
     }
 
     directDownloadAttempts++;
-    console.log(`⬇️ Starting download with anti-detection (attempt ${directDownloadAttempts}): ${downloadId}`);
+    console.log(`⬇️ Starting enhanced download (attempt ${directDownloadAttempts}): ${downloadId}`);
     
     const filename = `${downloadId}.%(ext)s`;
     const outputPath = path.join(TEMP_DIR, filename);
     
-    let args = [
-      '-o', outputPath,
-      '--newline',
-      '--no-warnings',
-      '--ignore-errors',
-      // Anti-detection measures
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      '--sleep-interval', '1',
-      '--max-sleep-interval', '3',
-      // Retry mechanism
-      '--retries', '3',
-      '--fragment-retries', '3',
-      // Use different extractors
-      '--extractor-args', 'youtube:player_client=web',
+    // Multiple download strategies
+    const downloadStrategies = [
+      {
+        name: 'enhanced_web',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          '--add-header', 'Accept-Language:en-US,en;q=0.9',
+          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          '--add-header', 'Sec-Fetch-Mode:navigate',
+          '--add-header', 'Sec-Fetch-Site:none',
+          '--sleep-interval', '1', '--max-sleep-interval', '3',
+          '--retries', '3', '--fragment-retries', '3',
+          '--extractor-args', 'youtube:player_client=web'
+        ]
+      },
+      {
+        name: 'android_fallback',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+          '--sleep-interval', '2', '--max-sleep-interval', '5',
+          '--retries', '5', '--fragment-retries', '5',
+          '--extractor-args', 'youtube:player_client=android'
+        ]
+      },
+      {
+        name: 'ios_fallback',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.ios.youtube/17.36.4 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
+          '--sleep-interval', '3', '--max-sleep-interval', '7',
+          '--retries', '7', '--fragment-retries', '7',
+          '--extractor-args', 'youtube:player_client=ios'
+        ]
+      }
     ];
     
-    // Quality settings
-    if (quality === 'audio') {
-      args.push('--extract-audio', '--audio-format', 'mp3');
-    } else if (quality !== 'best') {
-      args.push('-f', quality);
+    // Add quality settings to all strategies
+    for (const strategy of downloadStrategies) {
+      if (quality === 'audio') {
+        strategy.args.push('--extract-audio', '--audio-format', 'mp3');
+      } else if (quality !== 'best') {
+        strategy.args.push('-f', quality);
+      }
+      strategy.args.push(url);
     }
     
-    args.push(url);
-    
-    const ytdlp = spawn(ytDlpPath, args);
-    
-    ytdlp.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log('yt-dlp output:', output);
-      
-      // Parse progress
-      const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
-      if (progressMatch) {
-        const progress = parseFloat(progressMatch[1]);
-        downloadStatus.set(downloadId, {
-          status: 'downloading',
-          progress: progress
-        });
-      }
-    });
-    
-    ytdlp.stderr.on('data', (data) => {
-      const error = data.toString();
-      console.error('Download stderr:', error);
-      
-      // Check for specific bot detection errors
-      if (error.includes('Sign in to confirm you\'re not a bot') || 
-          error.includes('bot') || 
-          error.includes('authentication')) {
-        console.log('🤖 Bot detection triggered during download');
-        botDetectionIssue = true;
-        downloadStatus.set(downloadId, { 
-          status: 'error', 
-          error: 'Bot detection triggered. Please use command generation instead.',
-          fallback: true,
-          botDetected: true
-        });
-      }
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0) {
-        successfulDownloads++;
-        downloadStatus.set(downloadId, { status: 'completed' });
-        console.log(`✅ Download completed: ${downloadId} (${successfulDownloads}/${directDownloadAttempts} success rate)`);
-        resolve(downloadId);
-      } else {
-        const errorMsg = code === 1 && botDetectionIssue ? 
-          'Bot detection prevented download. Try command generation.' :
-          `Download failed (code ${code}). Try command generation instead.`;
+    // Try each download strategy
+    for (const strategy of downloadStrategies) {
+      try {
+        console.log(`🔧 Trying ${strategy.name} download strategy...`);
         
-        downloadStatus.set(downloadId, { 
-          status: 'error', 
-          error: errorMsg,
-          fallback: true,
-          botDetected: botDetectionIssue
+        await new Promise((strategyResolve, strategyReject) => {
+          const ytdlp = spawn(ytDlpPath, strategy.args);
+          let hasProgress = false;
+          
+          downloadStatus.set(downloadId, {
+            status: 'downloading',
+            progress: 0,
+            strategy: strategy.name
+          });
+          
+          ytdlp.stdout.on('data', (data) => {
+            const output = data.toString();
+            console.log(`${strategy.name} output:`, output);
+            
+            // Parse progress
+            const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
+            if (progressMatch) {
+              hasProgress = true;
+              const progress = parseFloat(progressMatch[1]);
+              downloadStatus.set(downloadId, {
+                status: 'downloading',
+                progress: progress,
+                strategy: strategy.name
+              });
+            }
+          });
+          
+          ytdlp.stderr.on('data', (data) => {
+            const error = data.toString();
+            console.error(`${strategy.name} stderr:`, error);
+            
+            // Check for bot detection
+            if (error.includes('Sign in to confirm') || 
+                error.includes('bot') || 
+                error.includes('authentication')) {
+              console.log(`🤖 Bot detection on ${strategy.name}`);
+              // Don't reject immediately, let it try to complete
+            }
+          });
+          
+          ytdlp.on('close', (code) => {
+            if (code === 0) {
+              console.log(`✅ ${strategy.name} download succeeded`);
+              strategyResolve();
+            } else {
+              console.log(`❌ ${strategy.name} failed with code ${code}`);
+              strategyReject(new Error(`${strategy.name} failed`));
+            }
+          });
+          
+          // Strategy timeout
+          setTimeout(() => {
+            ytdlp.kill();
+            strategyReject(new Error(`${strategy.name} timeout`));
+          }, 600000); // 10 minutes per strategy
         });
-        reject(new Error(errorMsg));
+        
+        // Success!
+        successfulDownloads++;
+        downloadStatus.set(downloadId, { 
+          status: 'completed',
+          strategy: strategy.name
+        });
+        console.log(`✅ Download completed with ${strategy.name}: ${downloadId}`);
+        resolve(downloadId);
+        return;
+        
+      } catch (error) {
+        console.log(`❌ ${strategy.name} download failed:`, error.message);
+        downloadStatus.set(downloadId, {
+          status: 'retrying',
+          progress: 0,
+          attempted_strategy: strategy.name,
+          error: error.message
+        });
+        continue;
       }
-    });
+    }
     
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      ytdlp.kill();
-      downloadStatus.set(downloadId, { 
-        status: 'error', 
-        error: 'Download timed out. Try command generation instead.',
-        fallback: true 
-      });
-      reject(new Error('Download timeout'));
-    }, 300000);
+    // All strategies failed
+    console.log('🤖 All download strategies failed');
+    botDetectionIssue = true;
+    downloadStatus.set(downloadId, { 
+      status: 'error', 
+      error: 'All download strategies failed. Bot detection active.',
+      fallback: true,
+      botDetected: true
+    });
+    reject(new Error('All download strategies failed'));
   });
 };
+
+// Enhanced command generation with even more strategies
+app.post('/api/command', (req, res) => {
+  try {
+    const { url, quality } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+    
+    // Base command parts
+    const qualityArgs = quality === 'audio' ? 
+      '--extract-audio --audio-format mp3' : 
+      quality !== 'best' ? `-f "${quality}"` : '';
+    
+    const outputArgs = '--output "%(title)s.%(ext)s"';
+    
+    // Multiple enhanced strategies
+    const strategies = {
+      basic: `yt-dlp ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      webClient: `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --extractor-args "youtube:player_client=web" ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      androidClient: `yt-dlp --user-agent "com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip" --extractor-args "youtube:player_client=android" ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      iosClient: `yt-dlp --user-agent "com.google.ios.youtube/17.36.4 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)" --extractor-args "youtube:player_client=ios" ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      withCookies: `yt-dlp --cookies-from-browser chrome ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      aggressive: `yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --add-header "Accept-Language:en-US,en;q=0.9" --sleep-interval 2 --retries 5 --extractor-args "youtube:player_client=web" ${qualityArgs} ${outputArgs} "${url}"`,
+      
+      ultimate: `yt-dlp --cookies-from-browser chrome --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --add-header "Accept-Language:en-US,en;q=0.9" --sleep-interval 3 --retries 10 --fragment-retries 10 --extractor-args "youtube:player_client=web" ${qualityArgs} ${outputArgs} "${url}"`
+    };
+    
+    // Clean up extra spaces
+    Object.keys(strategies).forEach(key => {
+      strategies[key] = strategies[key].replace(/\s+/g, ' ').trim();
+    });
+    
+    const recommendedStrategy = botDetectionIssue ? 
+      (successfulDownloads > 0 ? 'androidClient' : 'withCookies') : 'basic';
+    
+    res.json({
+      success: true,
+      command: strategies[recommendedStrategy],
+      message: 'Enhanced anti-detection strategies generated',
+      strategies: strategies,
+      recommended: recommendedStrategy,
+      instructions: `Recommended: "${recommendedStrategy}" strategy. Try in order: ${recommendedStrategy} → withCookies → ultimate`,
+      troubleshooting: [
+        '1. Install yt-dlp: pip install yt-dlp',
+        '2. Try recommended strategy first',
+        '3. If blocked: androidClient or iosClient',
+        '4. For login videos: withCookies',
+        '5. Nuclear option: ultimate (all bypasses)',
+        '6. Last resort: Manual cookie export'
+      ],
+      server_stats: {
+        bot_detection: botDetectionIssue,
+        success_rate: directDownloadAttempts > 0 ? (successfulDownloads / directDownloadAttempts * 100).toFixed(1) + '%' : 'N/A',
+        total_attempts: directDownloadAttempts,
+        successful_downloads: successfulDownloads
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // API Routes
 app.get('/api/health', (req, res) => {
