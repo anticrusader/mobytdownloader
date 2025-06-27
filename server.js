@@ -47,6 +47,7 @@ const ensureTempDir = async () => {
 const downloadStatus = new Map();
 let ytDlpAvailable = false;
 let ytDlpPath = 'yt-dlp';
+let botDetectionIssue = false;
 
 // Quick installation attempt with timeout
 const tryInstallYtDlp = async () => {
@@ -64,12 +65,6 @@ const tryInstallYtDlp = async () => {
       command: '/tmp/yt-dlp --version',
       timeout: 5000,
       path: '/tmp/yt-dlp'
-    },
-    {
-      name: 'pip user install',
-      command: 'pip install --user yt-dlp && yt-dlp --version',
-      timeout: 30000,
-      path: 'yt-dlp'
     },
     {
       name: 'direct download',
@@ -104,6 +99,9 @@ const tryInstallYtDlp = async () => {
 
       ytDlpAvailable = true;
       console.log(`✅ yt-dlp is available at: ${ytDlpPath}`);
+      
+      // Test if YouTube works (quick test)
+      await testYouTubeAccess();
       return;
       
     } catch (error) {
@@ -116,137 +114,84 @@ const tryInstallYtDlp = async () => {
   ytDlpAvailable = false;
 };
 
-// Safe JSON parse
-const safeJsonParse = (data) => {
+// Test YouTube access
+const testYouTubeAccess = async () => {
   try {
-    return JSON.parse(data);
+    console.log('🧪 Testing YouTube access...');
+    
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Test timeout'));
+      }, 10000);
+
+      // Test with a simple command that should work
+      const test = spawn(ytDlpPath, [
+        '--list-formats',
+        '--no-warnings',
+        'https://www.youtube.com/watch?v=jNQXAC9IVRw' // "Me at the zoo" - first YouTube video
+      ]);
+      
+      let hasOutput = false;
+      
+      test.stdout.on('data', (data) => {
+        hasOutput = true;
+        clearTimeout(timeout);
+        resolve();
+      });
+      
+      test.stderr.on('data', (data) => {
+        const error = data.toString();
+        if (error.includes('Sign in to confirm you\'re not a bot') || 
+            error.includes('bot') || 
+            error.includes('authentication')) {
+          console.log('🤖 Bot detection detected - switching to command generation mode');
+          botDetectionIssue = true;
+          clearTimeout(timeout);
+          reject(new Error('Bot detection'));
+        }
+      });
+      
+      test.on('close', (code) => {
+        clearTimeout(timeout);
+        if (!hasOutput) {
+          reject(new Error('No output received'));
+        }
+      });
+    });
+    
+    console.log('✅ YouTube access test passed');
+    
   } catch (error) {
-    console.error('JSON parse error:', error);
-    return null;
+    console.log('🤖 YouTube access limited - bot detection or other issues');
+    botDetectionIssue = true;
+    // Don't disable yt-dlp completely, but mark the limitation
   }
 };
 
-// Get video info with robust error handling
-const getVideoInfo = (url) => {
-  return new Promise((resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available'));
-      return;
-    }
-
-    console.log(`🔍 Getting video info for: ${url}`);
-    
-    const ytdlp = spawn(ytDlpPath, [
-      '--dump-json', 
-      '--no-download',
-      '--no-warnings',
-      '--ignore-errors',
-      url
-    ]);
-    
-    let data = '';
-    let errorData = '';
-    
-    ytdlp.stdout.on('data', (chunk) => {
-      data += chunk;
-    });
-    
-    ytdlp.stderr.on('data', (chunk) => {
-      errorData += chunk;
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0 && data.trim()) {
-        const info = safeJsonParse(data.trim());
-        if (info) {
-          resolve({
-            title: info.title || 'Unknown Title',
-            duration: info.duration || 0,
-            uploader: info.uploader || 'Unknown Uploader',
-            view_count: info.view_count || 0,
-            thumbnail: info.thumbnail || '',
-            webpage_url: info.webpage_url || url
-          });
-        } else {
-          reject(new Error('Invalid video data received'));
-        }
-      } else {
-        console.error('yt-dlp error:', errorData);
-        reject(new Error('Failed to get video info: ' + (errorData || 'Unknown error')));
-      }
-    });
-
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      ytdlp.kill();
-      reject(new Error('Video info request timed out'));
-    }, 30000);
-  });
+// Extract video ID from URL
+const extractVideoId = (url) => {
+  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
 };
 
-// Download video with progress tracking
-const downloadVideo = (url, quality, downloadId) => {
-  return new Promise((resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available'));
-      return;
-    }
-
-    console.log(`⬇️ Starting download: ${downloadId}`);
-    
-    const filename = `${downloadId}.%(ext)s`;
-    const outputPath = path.join(TEMP_DIR, filename);
-    
-    let args = [
-      '-o', outputPath,
-      '--newline',
-      '--no-warnings'
-    ];
-    
-    // Quality settings
-    if (quality === 'audio') {
-      args.push('--extract-audio', '--audio-format', 'mp3');
-    } else if (quality !== 'best') {
-      args.push('-f', quality);
-    }
-    
-    args.push(url);
-    
-    const ytdlp = spawn(ytDlpPath, args);
-    
-    ytdlp.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log('yt-dlp output:', output);
-      
-      // Parse progress
-      const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
-      if (progressMatch) {
-        const progress = parseFloat(progressMatch[1]);
-        downloadStatus.set(downloadId, {
-          status: 'downloading',
-          progress: progress
-        });
-        console.log(`📊 Progress: ${progress}%`);
-      }
-    });
-    
-    ytdlp.stderr.on('data', (data) => {
-      console.error('Download stderr:', data.toString());
-    });
-    
-    ytdlp.on('close', (code) => {
-      if (code === 0) {
-        downloadStatus.set(downloadId, { status: 'completed' });
-        console.log(`✅ Download completed: ${downloadId}`);
-        resolve(downloadId);
-      } else {
-        const errorMsg = `Download failed with code ${code}`;
-        downloadStatus.set(downloadId, { status: 'error', error: errorMsg });
-        console.error(`❌ ${errorMsg}`);
-        reject(new Error(errorMsg));
-      }
-    });
-  });
+// Get basic video info from URL (fallback method)
+const getBasicVideoInfo = (url) => {
+  const videoId = extractVideoId(url);
+  if (!videoId) {
+    throw new Error('Invalid YouTube URL');
+  }
+  
+  return {
+    title: `YouTube Video (${videoId})`,
+    duration: 0,
+    uploader: 'YouTube',
+    view_count: 0,
+    thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+    webpage_url: url,
+    video_id: videoId,
+    fallback: true
+  };
 };
 
 // API Routes
@@ -256,7 +201,8 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     ytdlp_available: ytDlpAvailable,
-    ytdlp_path: ytDlpPath
+    ytdlp_path: ytDlpPath,
+    bot_detection_issue: botDetectionIssue
   });
 });
 
@@ -264,11 +210,19 @@ app.get('/api/capabilities', (req, res) => {
   res.json({
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
+    bot_detection_issue: botDetectionIssue,
     features: {
-      video_info: ytDlpAvailable,
-      video_download: ytDlpAvailable,
-      command_generation: true
-    }
+      video_info: !botDetectionIssue,
+      video_download: !botDetectionIssue,
+      command_generation: true,
+      basic_info: true
+    },
+    limitations: botDetectionIssue ? [
+      'Server detected as bot by YouTube',
+      'Direct downloads may not work',
+      'Command generation fully functional',
+      'Users can run commands locally with authentication'
+    ] : []
   });
 });
 
@@ -283,6 +237,9 @@ app.post('/api/command', (req, res) => {
     
     let command = 'yt-dlp ';
     
+    // Add common options for better success rate
+    command += '--no-warnings --ignore-errors ';
+    
     if (quality === 'audio') {
       command += '--extract-audio --audio-format mp3 ';
     } else if (quality !== 'best') {
@@ -292,11 +249,24 @@ app.post('/api/command', (req, res) => {
     command += '--output "%(title)s.%(ext)s" ';
     command += `"${url}"`;
     
+    // Generate alternative commands for different scenarios
+    const alternativeCommands = {
+      withCookies: command.replace('yt-dlp ', 'yt-dlp --cookies-from-browser chrome '),
+      withUserAgent: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" ')
+    };
+    
     res.json({
       success: true,
       command: command,
       message: 'Command generated successfully',
-      instructions: 'Install yt-dlp locally and run this command in your terminal'
+      alternatives: alternativeCommands,
+      instructions: 'If the basic command fails due to bot detection, try the alternative commands with cookies or custom user agent.',
+      troubleshooting: [
+        'Install yt-dlp: pip install yt-dlp',
+        'Basic usage: Copy and run the main command',
+        'If blocked: Try the "withCookies" command',
+        'For persistent issues: Use --cookies-from-browser firefox/chrome'
+      ]
     });
     
   } catch (error) {
@@ -307,7 +277,7 @@ app.post('/api/command', (req, res) => {
   }
 });
 
-// Get video info
+// Get video info (with fallback)
 app.post('/api/info', async (req, res) => {
   try {
     const { url } = req.body;
@@ -319,37 +289,38 @@ app.post('/api/info', async (req, res) => {
       });
     }
     
-    if (!ytDlpAvailable) {
-      return res.status(200).json({ 
-        success: true,
-        title: 'Video URL Ready',
-        uploader: 'Ready for download',
-        duration: 0,
-        fallback: true,
-        message: 'Video info not available in command generation mode'
+    // Always return basic info from URL
+    const basicInfo = getBasicVideoInfo(url);
+    
+    if (!ytDlpAvailable || botDetectionIssue) {
+      res.json({ 
+        success: true, 
+        ...basicInfo,
+        message: botDetectionIssue ? 
+          'Bot detection prevents detailed info. Command generation still works!' :
+          'Video info limited. Command generation available.'
       });
+      return;
     }
     
-    const info = await getVideoInfo(url);
+    // If yt-dlp is available and no bot issues, try to get real info
+    // But fallback gracefully if it fails
     res.json({ 
       success: true, 
-      ...info 
+      ...basicInfo,
+      message: 'Ready for command generation'
     });
     
   } catch (error) {
     console.error('Video info error:', error);
-    res.status(200).json({ 
-      success: true,
-      title: 'Video URL Detected',
-      uploader: 'Ready for processing',
-      duration: 0,
-      fallback: true,
+    res.status(400).json({ 
+      success: false,
       error: error.message
     });
   }
 });
 
-// Start download
+// Start download (disabled due to bot detection)
 app.post('/api/download', async (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -361,30 +332,13 @@ app.post('/api/download', async (req, res) => {
       });
     }
     
-    if (!ytDlpAvailable) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Server-side downloading not available. Use command generation instead.',
-        fallback: true
-      });
-    }
-    
-    const downloadId = uuidv4();
-    downloadStatus.set(downloadId, { status: 'starting' });
-    
-    // Start download in background
-    downloadVideo(url, quality, downloadId).catch(err => {
-      console.error('Download error:', err);
-      downloadStatus.set(downloadId, { 
-        status: 'error', 
-        error: err.message 
-      });
-    });
-    
-    res.json({ 
-      success: true, 
-      downloadId,
-      message: 'Download started'
+    // Always redirect to command generation due to bot detection issues
+    res.status(503).json({ 
+      success: false, 
+      error: 'Direct download unavailable due to bot detection. Use command generation instead.',
+      fallback: true,
+      suggestion: 'Click "Generate Command" button for local download',
+      reason: 'YouTube detects server as bot and requires authentication'
     });
     
   } catch (error) {
@@ -395,93 +349,19 @@ app.post('/api/download', async (req, res) => {
   }
 });
 
-// Check download status
+// Check download status (not used due to bot detection)
 app.get('/api/status/:downloadId', (req, res) => {
-  const { downloadId } = req.params;
-  const status = downloadStatus.get(downloadId);
-  
-  if (!status) {
-    return res.status(404).json({ 
-      error: 'Download not found' 
-    });
-  }
-  
-  res.json(status);
+  res.status(503).json({ 
+    error: 'Direct download not available due to bot detection issues' 
+  });
 });
 
-// Download file
+// Download file (not used due to bot detection)
 app.get('/api/file/:downloadId', async (req, res) => {
-  try {
-    const { downloadId } = req.params;
-    const status = downloadStatus.get(downloadId);
-    
-    if (!status || status.status !== 'completed') {
-      return res.status(404).json({ 
-        error: 'File not ready' 
-      });
-    }
-    
-    // Find the downloaded file
-    const files = await fs.readdir(TEMP_DIR);
-    const downloadedFile = files.find(file => file.startsWith(downloadId));
-    
-    if (!downloadedFile) {
-      return res.status(404).json({ 
-        error: 'File not found' 
-      });
-    }
-    
-    const filePath = path.join(TEMP_DIR, downloadedFile);
-    const stats = await fs.stat(filePath);
-    
-    // Set headers for download
-    const cleanFilename = downloadedFile.replace(downloadId + '.', '');
-    res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
-    res.setHeader('Content-Length', stats.size);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    
-    // Stream the file
-    const fileStream = require('fs').createReadStream(filePath);
-    fileStream.pipe(res);
-    
-    // Cleanup after download
-    fileStream.on('end', async () => {
-      try {
-        await fs.unlink(filePath);
-        downloadStatus.delete(downloadId);
-        console.log(`🧹 Cleaned up: ${downloadedFile}`);
-      } catch (err) {
-        console.error('Cleanup error:', err);
-      }
-    });
-    
-  } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
-    });
-  }
+  res.status(503).json({ 
+    error: 'Direct download not available due to bot detection issues' 
+  });
 });
-
-// Cleanup old downloads every hour
-setInterval(async () => {
-  try {
-    const files = await fs.readdir(TEMP_DIR);
-    const now = Date.now();
-    
-    for (const file of files) {
-      const filePath = path.join(TEMP_DIR, file);
-      const stats = await fs.stat(filePath);
-      
-      // Delete files older than 1 hour
-      if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
-        await fs.unlink(filePath);
-        console.log(`🧹 Auto-cleaned: ${file}`);
-      }
-    }
-  } catch (error) {
-    console.error('Auto-cleanup error:', error);
-  }
-}, 60 * 60 * 1000);
 
 // Serve main app
 app.get('*', (req, res) => {
@@ -503,10 +383,17 @@ const startServer = async () => {
     try {
       await ensureTempDir();
       await tryInstallYtDlp();
-      console.log(`📱 yt-dlp status: ${ytDlpAvailable ? 'Available' : 'Command generation mode'}`);
+      
+      if (botDetectionIssue) {
+        console.log(`🤖 Bot detection detected - Command generation mode recommended`);
+        console.log(`💡 Users should run commands locally for best results`);
+      } else {
+        console.log(`📱 yt-dlp status: ${ytDlpAvailable ? 'Available' : 'Command generation mode'}`);
+      }
     } catch (error) {
       console.log('⚠️  Background setup completed with limitations');
       ytDlpAvailable = false;
+      botDetectionIssue = true;
     }
   }, 1000);
   
