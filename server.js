@@ -32,113 +32,39 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
-// Create temp directory for downloads
-const TEMP_DIR = '/tmp/downloads';
-const ensureTempDir = async () => {
-  try {
-    await fs.mkdir(TEMP_DIR, { recursive: true });
-    console.log('📁 Temp directory ready');
-  } catch (error) {
-    console.log('📁 Temp directory already exists');
-  }
-};
-
-// Global variables
+// Global state variables
 const downloadStatus = new Map();
 let ytDlpAvailable = false;
 let ytDlpPath = 'yt-dlp';
 let directDownloadAttempts = 0;
 let successfulDownloads = 0;
+let serverReady = false;
 
 // Enhanced User Agents for rotation
 const userAgents = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ];
 
 let currentUserAgentIndex = 0;
 
-// Get rotating user agent
 const getRandomUserAgent = () => {
   const agent = userAgents[currentUserAgentIndex];
   currentUserAgentIndex = (currentUserAgentIndex + 1) % userAgents.length;
   return agent;
 };
 
-// Create realistic session cookies (simple approach)
+// Create realistic session cookies
 const createSessionCookies = () => {
   const sessionId = Math.random().toString(36).substring(2, 15);
   const timestamp = Date.now();
   
-  // Basic session cookies that look realistic
   return [
     `VISITOR_INFO1_LIVE=${sessionId}_${timestamp}`,
     `YSC=${sessionId}`,
-    `PREF=f1=50000000&f6=40000000&hl=en`,
-    `CONSENT=YES+cb.20210328-17-p0.en+FX+667`,
-    `GPS=1`
+    `PREF=f1=50000000&f6=40000000&hl=en`
   ].join('; ');
-};
-
-// Install yt-dlp
-const tryInstallYtDlp = async () => {
-  console.log('🔧 Installing yt-dlp...');
-  
-  const methods = [
-    {
-      name: 'existing yt-dlp',
-      command: 'yt-dlp --version',
-      timeout: 5000,
-      path: 'yt-dlp'
-    },
-    {
-      name: 'existing /tmp/yt-dlp',
-      command: '/tmp/yt-dlp --version',
-      timeout: 5000,
-      path: '/tmp/yt-dlp'
-    },
-    {
-      name: 'direct download',
-      command: 'curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /tmp/yt-dlp && chmod +x /tmp/yt-dlp && /tmp/yt-dlp --version',
-      timeout: 30000,
-      path: '/tmp/yt-dlp'
-    }
-  ];
-
-  for (const method of methods) {
-    try {
-      console.log(`🔧 Trying: ${method.name}...`);
-      
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout'));
-        }, method.timeout);
-
-        exec(method.command, (error, stdout, stderr) => {
-          clearTimeout(timeout);
-          if (error) {
-            reject(error);
-          } else {
-            ytDlpPath = method.path;
-            resolve(stdout);
-          }
-        });
-      });
-
-      ytDlpAvailable = true;
-      console.log(`✅ yt-dlp available at: ${ytDlpPath}`);
-      return;
-      
-    } catch (error) {
-      console.log(`❌ ${method.name} failed, trying next...`);
-      continue;
-    }
-  }
-  
-  console.log('⚠️  yt-dlp installation failed');
-  ytDlpAvailable = false;
 };
 
 // Extract video ID from URL
@@ -148,265 +74,198 @@ const extractVideoId = (url) => {
   return match ? match[1] : null;
 };
 
-// Enhanced video info with multiple anti-detection strategies
+// Quick yt-dlp check (non-blocking)
+const quickYtDlpCheck = () => {
+  console.log('🔧 Quick yt-dlp check...');
+  
+  exec('yt-dlp --version', { timeout: 3000 }, (error, stdout, stderr) => {
+    if (!error) {
+      ytDlpAvailable = true;
+      ytDlpPath = 'yt-dlp';
+      console.log('✅ yt-dlp available');
+    } else {
+      exec('/tmp/yt-dlp --version', { timeout: 3000 }, (error2, stdout2, stderr2) => {
+        if (!error2) {
+          ytDlpAvailable = true;
+          ytDlpPath = '/tmp/yt-dlp';
+          console.log('✅ yt-dlp available at /tmp/yt-dlp');
+        } else {
+          console.log('⚠️  yt-dlp not immediately available - will install in background');
+          installYtDlpBackground();
+        }
+      });
+    }
+  });
+};
+
+// Background yt-dlp installation
+const installYtDlpBackground = () => {
+  console.log('🔧 Installing yt-dlp in background...');
+  
+  exec('curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /tmp/yt-dlp && chmod +x /tmp/yt-dlp', 
+    { timeout: 60000 }, (error, stdout, stderr) => {
+    if (!error) {
+      ytDlpAvailable = true;
+      ytDlpPath = '/tmp/yt-dlp';
+      console.log('✅ yt-dlp installed successfully in background');
+    } else {
+      console.log('❌ Background yt-dlp installation failed');
+    }
+  });
+};
+
+// Enhanced video info with timeout
 const getVideoInfo = async (url) => {
-  return new Promise(async (resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available'));
-      return;
-    }
+  if (!ytDlpAvailable) {
+    throw new Error('yt-dlp not available');
+  }
 
-    console.log(`🔍 Getting video info with enhanced anti-detection: ${url}`);
-    
-    // Try multiple strategies
-    const strategies = [
-      {
-        name: 'web_enhanced',
-        args: [
-          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
-          '--user-agent', getRandomUserAgent(),
-          '--add-header', 'Accept-Language:en-US,en;q=0.9',
-          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          '--add-header', 'Sec-Fetch-Mode:navigate',
-          '--add-header', 'Sec-Fetch-Site:none',
-          '--add-header', 'Sec-Fetch-User:?1',
-          '--add-header', `Cookie: ${createSessionCookies()}`,
-          '--extractor-args', 'youtube:player_client=web',
-          '--sleep-interval', '1',
-          url
-        ]
-      },
-      {
-        name: 'android_client',
-        args: [
-          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SM-G981B) gzip',
-          '--extractor-args', 'youtube:player_client=android',
-          '--sleep-interval', '2',
-          url
-        ]
-      },
-      {
-        name: 'ios_client',
-        args: [
-          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'com.google.ios.youtube/18.11.2 (iPhone14,3; U; CPU iOS 16_4 like Mac OS X)',
-          '--extractor-args', 'youtube:player_client=ios',
-          '--sleep-interval', '2',
-          url
-        ]
-      }
+  console.log(`🔍 Getting video info: ${url}`);
+  
+  return new Promise((resolve, reject) => {
+    const args = [
+      '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+      '--user-agent', getRandomUserAgent(),
+      '--add-header', 'Accept-Language:en-US,en;q=0.9',
+      '--add-header', `Cookie: ${createSessionCookies()}`,
+      '--extractor-args', 'youtube:player_client=web',
+      url
     ];
     
-    for (const strategy of strategies) {
-      try {
-        console.log(`🔧 Trying ${strategy.name} strategy...`);
-        
-        const info = await new Promise((strategyResolve, strategyReject) => {
-          const ytdlp = spawn(ytDlpPath, strategy.args);
-          let data = '';
-          let errorData = '';
-          
-          ytdlp.stdout.on('data', (chunk) => {
-            data += chunk;
-          });
-          
-          ytdlp.stderr.on('data', (chunk) => {
-            errorData += chunk;
-          });
-          
-          ytdlp.on('close', (code) => {
-            if (code === 0 && data.trim()) {
-              try {
-                const parsed = JSON.parse(data.trim());
-                strategyResolve(parsed);
-              } catch (parseError) {
-                strategyReject(new Error('Parse error'));
-              }
-            } else {
-              strategyReject(new Error(`Strategy failed: ${errorData}`));
-            }
-          });
-
-          setTimeout(() => {
-            ytdlp.kill();
-            strategyReject(new Error('Strategy timeout'));
-          }, 20000);
-        });
-        
-        console.log(`✅ ${strategy.name} strategy succeeded`);
-        resolve({
-          title: info.title || 'Unknown Title',
-          duration: info.duration || 0,
-          uploader: info.uploader || 'Unknown Uploader',
-          view_count: info.view_count || 0,
-          thumbnail: info.thumbnail || '',
-          webpage_url: info.webpage_url || url,
-          strategy_used: strategy.name
-        });
-        return;
-        
-      } catch (error) {
-        console.log(`❌ ${strategy.name} failed:`, error.message);
-        continue;
-      }
-    }
+    const ytdlp = spawn(ytDlpPath, args);
+    let data = '';
+    let errorData = '';
     
-    console.log('🤖 All strategies failed - using fallback');
-    reject(new Error('All anti-detection strategies failed'));
-  });
-};
-
-// Enhanced download with multiple strategies
-const downloadVideo = async (url, quality, downloadId) => {
-  return new Promise(async (resolve, reject) => {
-    if (!ytDlpAvailable) {
-      reject(new Error('yt-dlp not available'));
-      return;
-    }
-
-    directDownloadAttempts++;
-    console.log(`⬇️ Starting enhanced download: ${downloadId}`);
-    
-    const filename = `${downloadId}.%(ext)s`;
-    const outputPath = path.join(TEMP_DIR, filename);
-    
-    // Enhanced download strategies
-    const strategies = [
-      {
-        name: 'enhanced_web',
-        args: [
-          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-          '--user-agent', getRandomUserAgent(),
-          '--add-header', 'Accept-Language:en-US,en;q=0.9',
-          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          '--add-header', 'Sec-Fetch-Mode:navigate',
-          '--add-header', 'Sec-Fetch-Site:none',
-          '--add-header', 'Sec-Fetch-User:?1',
-          '--add-header', `Cookie: ${createSessionCookies()}`,
-          '--sleep-interval', '2', '--max-sleep-interval', '4',
-          '--retries', '3', '--fragment-retries', '3',
-          '--extractor-args', 'youtube:player_client=web'
-        ]
-      },
-      {
-        name: 'android_fallback',
-        args: [
-          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SM-G981B) gzip',
-          '--sleep-interval', '3', '--max-sleep-interval', '6',
-          '--retries', '5', '--fragment-retries', '5',
-          '--extractor-args', 'youtube:player_client=android'
-        ]
-      },
-      {
-        name: 'ios_fallback',
-        args: [
-          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'com.google.ios.youtube/18.11.2 (iPhone14,3; U; CPU iOS 16_4 like Mac OS X)',
-          '--sleep-interval', '4', '--max-sleep-interval', '8',
-          '--retries', '7', '--fragment-retries', '7',
-          '--extractor-args', 'youtube:player_client=ios'
-        ]
-      }
-    ];
-    
-    // Add quality settings to all strategies
-    for (const strategy of strategies) {
-      if (quality === 'audio') {
-        strategy.args.push('--extract-audio', '--audio-format', 'mp3');
-      } else if (quality !== 'best') {
-        strategy.args.push('-f', quality);
-      }
-      strategy.args.push(url);
-    }
-    
-    // Try each strategy
-    for (const strategy of strategies) {
-      try {
-        console.log(`🔧 Trying ${strategy.name} download strategy...`);
-        
-        await new Promise((strategyResolve, strategyReject) => {
-          const ytdlp = spawn(ytDlpPath, strategy.args);
-          
-          downloadStatus.set(downloadId, {
-            status: 'downloading',
-            progress: 0,
-            strategy: strategy.name
-          });
-          
-          ytdlp.stdout.on('data', (data) => {
-            const output = data.toString();
-            
-            const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
-            if (progressMatch) {
-              const progress = parseFloat(progressMatch[1]);
-              downloadStatus.set(downloadId, {
-                status: 'downloading',
-                progress: progress,
-                strategy: strategy.name
-              });
-            }
-          });
-          
-          ytdlp.stderr.on('data', (data) => {
-            const error = data.toString();
-            if (error.includes('Sign in to confirm') || 
-                error.includes('bot') || 
-                error.includes('authentication')) {
-              console.log(`🤖 Bot detection on ${strategy.name}`);
-            }
-          });
-          
-          ytdlp.on('close', (code) => {
-            if (code === 0) {
-              console.log(`✅ ${strategy.name} download succeeded`);
-              strategyResolve();
-            } else {
-              console.log(`❌ ${strategy.name} failed with code ${code}`);
-              strategyReject(new Error(`${strategy.name} failed`));
-            }
-          });
-          
-          setTimeout(() => {
-            ytdlp.kill();
-            strategyReject(new Error(`${strategy.name} timeout`));
-          }, 600000); // 10 minutes
-        });
-        
-        // Success!
-        successfulDownloads++;
-        downloadStatus.set(downloadId, { 
-          status: 'completed',
-          strategy: strategy.name
-        });
-        console.log(`✅ Download completed with ${strategy.name}: ${downloadId}`);
-        resolve(downloadId);
-        return;
-        
-      } catch (error) {
-        console.log(`❌ ${strategy.name} download failed:`, error.message);
-        downloadStatus.set(downloadId, {
-          status: 'retrying',
-          progress: 0,
-          attempted_strategy: strategy.name,
-          error: error.message
-        });
-        continue;
-      }
-    }
-    
-    // All strategies failed
-    downloadStatus.set(downloadId, { 
-      status: 'error', 
-      error: 'All download strategies failed',
-      fallback: true
+    ytdlp.stdout.on('data', (chunk) => {
+      data += chunk;
     });
-    reject(new Error('All download strategies failed'));
+    
+    ytdlp.stderr.on('data', (chunk) => {
+      errorData += chunk;
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code === 0 && data.trim()) {
+        try {
+          const info = JSON.parse(data.trim());
+          resolve({
+            title: info.title || 'Unknown Title',
+            duration: info.duration || 0,
+            uploader: info.uploader || 'Unknown Uploader',
+            view_count: info.view_count || 0,
+            thumbnail: info.thumbnail || '',
+            webpage_url: info.webpage_url || url
+          });
+        } catch (parseError) {
+          reject(new Error('Failed to parse video info'));
+        }
+      } else {
+        reject(new Error('Failed to get video info'));
+      }
+    });
+
+    // Quick timeout for video info
+    setTimeout(() => {
+      ytdlp.kill();
+      reject(new Error('Video info timeout'));
+    }, 15000);
   });
 };
 
-// API Routes
+// Enhanced download function
+const downloadVideo = async (url, quality, downloadId) => {
+  if (!ytDlpAvailable) {
+    throw new Error('yt-dlp not available');
+  }
+
+  directDownloadAttempts++;
+  console.log(`⬇️ Starting download: ${downloadId}`);
+  
+  const filename = `${downloadId}.%(ext)s`;
+  const outputPath = `/tmp/downloads/${filename}`;
+  
+  // Ensure downloads directory exists
+  try {
+    await fs.mkdir('/tmp/downloads', { recursive: true });
+  } catch (e) {
+    // Directory exists
+  }
+  
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+      '--user-agent', getRandomUserAgent(),
+      '--add-header', 'Accept-Language:en-US,en;q=0.9',
+      '--add-header', `Cookie: ${createSessionCookies()}`,
+      '--sleep-interval', '1', '--max-sleep-interval', '3',
+      '--retries', '3', '--fragment-retries', '3',
+      '--extractor-args', 'youtube:player_client=web'
+    ];
+    
+    if (quality === 'audio') {
+      args.push('--extract-audio', '--audio-format', 'mp3');
+    } else if (quality !== 'best') {
+      args.push('-f', quality);
+    }
+    
+    args.push(url);
+    
+    const ytdlp = spawn(ytDlpPath, args);
+    
+    ytdlp.stdout.on('data', (data) => {
+      const output = data.toString();
+      const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
+      if (progressMatch) {
+        const progress = parseFloat(progressMatch[1]);
+        downloadStatus.set(downloadId, {
+          status: 'downloading',
+          progress: progress
+        });
+      }
+    });
+    
+    ytdlp.stderr.on('data', (data) => {
+      console.error('Download stderr:', data.toString());
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code === 0) {
+        successfulDownloads++;
+        downloadStatus.set(downloadId, { status: 'completed' });
+        console.log(`✅ Download completed: ${downloadId}`);
+        resolve(downloadId);
+      } else {
+        downloadStatus.set(downloadId, { 
+          status: 'error', 
+          error: `Download failed with code ${code}`
+        });
+        reject(new Error(`Download failed with code ${code}`));
+      }
+    });
+    
+    // Download timeout
+    setTimeout(() => {
+      ytdlp.kill();
+      downloadStatus.set(downloadId, { 
+        status: 'error', 
+        error: 'Download timed out'
+      });
+      reject(new Error('Download timeout'));
+    }, 300000); // 5 minutes
+  });
+};
+
+// Immediate health check endpoint (most important for Render)
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    server_ready: serverReady,
+    ytdlp_available: ytDlpAvailable
+  });
+});
+
+// API health endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -414,6 +273,7 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
+    server_ready: serverReady,
     download_stats: {
       attempts: directDownloadAttempts,
       successful: successfulDownloads,
@@ -426,7 +286,7 @@ app.get('/api/capabilities', (req, res) => {
   res.json({
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
-    anti_detection: true,
+    server_ready: serverReady,
     features: {
       video_info: ytDlpAvailable,
       video_download: ytDlpAvailable,
@@ -467,7 +327,7 @@ app.post('/api/info', async (req, res) => {
       return res.json({ 
         success: true, 
         ...basicInfo,
-        message: 'yt-dlp not available, using basic info'
+        message: 'yt-dlp not ready yet, using basic info'
       });
     }
     
@@ -476,11 +336,9 @@ app.post('/api/info', async (req, res) => {
       res.json({ 
         success: true, 
         ...info,
-        message: 'Video info retrieved with multi-strategy anti-detection'
+        message: 'Video info retrieved successfully'
       });
     } catch (error) {
-      console.error('Video info error:', error);
-      
       const basicInfo = {
         title: `YouTube Video (${extractVideoId(url) || 'Unknown'})`,
         duration: 0,
@@ -494,7 +352,7 @@ app.post('/api/info', async (req, res) => {
       res.json({ 
         success: true, 
         ...basicInfo,
-        message: 'Using basic info due to detection issues',
+        message: 'Using basic info due to API issues',
         error: error.message
       });
     }
@@ -522,7 +380,7 @@ app.post('/api/download', async (req, res) => {
     if (!ytDlpAvailable) {
       return res.status(503).json({ 
         success: false, 
-        error: 'yt-dlp not available on server',
+        error: 'yt-dlp not ready yet, please try again in a moment',
         fallback: true
       });
     }
@@ -530,7 +388,7 @@ app.post('/api/download', async (req, res) => {
     const downloadId = uuidv4();
     downloadStatus.set(downloadId, { status: 'starting' });
     
-    // Start download with multiple strategies
+    // Start download
     downloadVideo(url, quality, downloadId).catch(err => {
       console.error('Download error:', err);
       downloadStatus.set(downloadId, { 
@@ -542,7 +400,7 @@ app.post('/api/download', async (req, res) => {
     res.json({ 
       success: true, 
       downloadId,
-      message: 'Download started with multi-strategy anti-detection'
+      message: 'Download started with enhanced anti-detection'
     });
     
   } catch (error) {
@@ -579,7 +437,7 @@ app.get('/api/file/:downloadId', async (req, res) => {
       });
     }
     
-    const files = await fs.readdir(TEMP_DIR);
+    const files = await fs.readdir('/tmp/downloads');
     const downloadedFile = files.find(file => file.startsWith(downloadId));
     
     if (!downloadedFile) {
@@ -588,7 +446,7 @@ app.get('/api/file/:downloadId', async (req, res) => {
       });
     }
     
-    const filePath = path.join(TEMP_DIR, downloadedFile);
+    const filePath = `/tmp/downloads/${downloadedFile}`;
     const stats = await fs.stat(filePath);
     
     const cleanFilename = downloadedFile.replace(downloadId + '.', '');
@@ -616,7 +474,7 @@ app.get('/api/file/:downloadId', async (req, res) => {
   }
 });
 
-// Enhanced command generation
+// Command generation
 app.post('/api/command', (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -636,18 +494,10 @@ app.post('/api/command', (req, res) => {
     command += '--output "%(title)s.%(ext)s" ';
     command += `"${url}"`;
     
-    const alternatives = {
-      withUserAgent: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" '),
-      withCookies: command.replace('yt-dlp ', 'yt-dlp --cookies-from-browser chrome '),
-      enhanced: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --sleep-interval 2 --retries 5 ')
-    };
-    
     res.json({
       success: true,
       command: command,
-      message: 'Command generated successfully',
-      alternatives: alternatives,
-      instructions: 'Server uses multi-strategy anti-detection for direct downloads!'
+      message: 'Command generated successfully'
     });
     
   } catch (error) {
@@ -658,75 +508,35 @@ app.post('/api/command', (req, res) => {
   }
 });
 
-// Cleanup old downloads
-setInterval(async () => {
-  try {
-    const files = await fs.readdir(TEMP_DIR);
-    const now = Date.now();
-    
-    for (const file of files) {
-      const filePath = path.join(TEMP_DIR, file);
-      const stats = await fs.stat(filePath);
-      
-      if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
-        await fs.unlink(filePath);
-        console.log(`🧹 Auto-cleaned: ${file}`);
-      }
-    }
-  } catch (error) {
-    console.error('Auto-cleanup error:', error);
-  }
-}, 60 * 60 * 1000);
-
 // Serve main app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Initialize server
-const startServer = async () => {
-  console.log('🚀 Starting YouTube Downloader with Enhanced Anti-Detection...');
+// Start server immediately (critical for Render health checks)
+const server = app.listen(port, () => {
+  console.log(`🚀 Server LIVE on port ${port}`);
+  console.log(`🌍 Health check ready at /health`);
+  serverReady = true;
   
-  const server = app.listen(port, () => {
-    console.log(`🌟 Server running on port ${port}`);
-    console.log(`🌍 Server is LIVE and ready for requests!`);
-  });
-  
-  setTimeout(async () => {
-    try {
-      await ensureTempDir();
-      await tryInstallYtDlp();
-      
-      if (ytDlpAvailable) {
-        console.log(`📱 Multi-strategy anti-detection ready!`);
-        console.log(`🔄 User agent rotation: ${userAgents.length} agents`);
-        console.log(`🍪 Session cookie generation: Active`);
-      } else {
-        console.log('⚠️  yt-dlp not available - command generation only');
-      }
-      
-    } catch (error) {
-      console.log('⚠️  Initialization completed with limitations');
-    }
-  }, 2000);
-  
-  return server;
-};
-
-// Start the server
-startServer().catch(error => {
-  console.error('❌ Server startup failed:', error);
-  app.listen(port, () => {
-    console.log(`🆘 Emergency server running on port ${port}`);
-  });
+  // Start background initialization
+  setTimeout(() => {
+    console.log('🔧 Starting background initialization...');
+    quickYtDlpCheck();
+  }, 1000);
 });
 
+// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('👋 Shutting down gracefully...');
-  process.exit(0);
+  server.close(() => {
+    process.exit(0);
+  });
 });
 
 process.on('SIGINT', () => {
   console.log('👋 Shutting down gracefully...');
-  process.exit(0);
+  server.close(() => {
+    process.exit(0);
+  });
 });
