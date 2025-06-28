@@ -61,9 +61,12 @@ const getRandomUserAgent = () => {
   return agent;
 };
 
-// Create Netscape cookie file format
+// FIXED: Create Netscape cookie file format with correct domain_specified values
 const createNetscapeCookieFile = async (cookies) => {
-  const cookieLines = ['# Netscape HTTP Cookie File'];
+  const cookieLines = [
+    '# Netscape HTTP Cookie File',
+    '# This is a generated file! Do not edit.'
+  ];
   
   cookies.forEach(cookie => {
     const parts = cookie.split('=');
@@ -72,14 +75,16 @@ const createNetscapeCookieFile = async (cookies) => {
       const value = parts.slice(1).join('=').trim();
       const expires = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
       
-      // Format: domain, domain_specified, path, secure, expires, name, value
-      cookieLines.push(`youtube.com\tTRUE\t/\tTRUE\t${expires}\t${name}\t${value}`);
-      cookieLines.push(`.youtube.com\tTRUE\t/\tTRUE\t${expires}\t${name}\t${value}`);
+      // FIXED: Format: domain, domain_specified, path, secure, expires, name, value
+      // domain_specified should be FALSE for main domain, TRUE for subdomains starting with dot
+      cookieLines.push(`youtube.com\tFALSE\t/\tFALSE\t${expires}\t${name}\t${value}`);
+      cookieLines.push(`.youtube.com\tTRUE\t/\tFALSE\t${expires}\t${name}\t${value}`);
     }
   });
   
   try {
-    await fs.writeFile(cookieFilePath, cookieLines.join('\n'));
+    // FIXED: Add final newline to cookie file
+    await fs.writeFile(cookieFilePath, cookieLines.join('\n') + '\n');
     cookieFileExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
     console.log(`✅ Cookie file created with ${cookies.length} cookies`);
     return true;
@@ -89,22 +94,41 @@ const createNetscapeCookieFile = async (cookies) => {
   }
 };
 
-// Create enhanced fallback cookie file
+// FIXED: Enhanced fallback cookie file with proper format
 const createFallbackCookieFile = async () => {
-  const timestamp = Date.now();
+  const timestamp = Math.floor(Date.now() / 1000);
   const sessionId = Math.random().toString(36).substring(2, 15);
   const visitorId = 'CgtQbXJILVdxaU5uYyiQmqK0BjIKCgJVUxIEGgAgEQ%3D%3D';
   
-  const fallbackCookies = [
-    `VISITOR_INFO1_LIVE=${visitorId}`,
-    `YSC=${sessionId}`,
-    `PREF=f1=50000000&f6=40000000&hl=en-US&gl=US`,
-    `CONSENT=YES+srp.gws-20211028-0-RC2.en+FX+667`,
-    `GPS=1`,
-    `SOCS=CAESAggC`
+  // Create proper Netscape format manually
+  const cookieLines = [
+    '# Netscape HTTP Cookie File',
+    '# This is a generated file! Do not edit.',
+    '',
+    // Format: domain, domain_specified, path, secure, expires, name, value
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tVISITOR_INFO1_LIVE\t${visitorId}`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tVISITOR_INFO1_LIVE\t${visitorId}`,
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tYSC\t${sessionId}`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tYSC\t${sessionId}`,
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tPREF\tf1=50000000&f6=40000000&hl=en-US&gl=US`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tPREF\tf1=50000000&f6=40000000&hl=en-US&gl=US`,
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tCONSENT\tYES+srp.gws-20211028-0-RC2.en+FX+667`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tCONSENT\tYES+srp.gws-20211028-0-RC2.en+FX+667`,
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tGPS\t1`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tGPS\t1`,
+    `youtube.com\tFALSE\t/\tFALSE\t${timestamp + 86400}\tSOCS\tCAESAggC`,
+    `.youtube.com\tTRUE\t/\tFALSE\t${timestamp + 86400}\tSOCS\tCAESAggC`
   ];
   
-  return await createNetscapeCookieFile(fallbackCookies);
+  try {
+    await fs.writeFile(cookieFilePath, cookieLines.join('\n') + '\n');
+    cookieFileExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+    console.log('✅ Fallback cookie file created with proper Netscape format');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to create fallback cookie file:', error);
+    return false;
+  }
 };
 
 // Establish real YouTube session and create cookie file
