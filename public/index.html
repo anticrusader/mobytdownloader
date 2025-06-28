@@ -69,6 +69,125 @@
             background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
         }
         
+        .cookie-upload-section {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 2px solid #ffc107;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 25px;
+            display: none;
+        }
+        
+        .cookie-upload-section.show {
+            display: block;
+            animation: slideIn 0.4s ease;
+        }
+        
+        .cookie-upload-section h3 {
+            margin: 0 0 15px 0;
+            color: #856404;
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .cookie-instructions {
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 0.9em;
+            line-height: 1.4;
+            color: #856404;
+        }
+        
+        .cookie-instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        
+        .cookie-instructions li {
+            margin: 5px 0;
+        }
+        
+        .cookie-textarea {
+            width: 100%;
+            height: 100px;
+            padding: 12px;
+            border: 2px solid #ffc107;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            resize: vertical;
+            background: white;
+        }
+        
+        .cookie-textarea:focus {
+            outline: none;
+            border-color: #e67e22;
+            box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.2);
+        }
+        
+        .cookie-upload-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #ffc107 0%, #e67e22 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+        
+        .cookie-upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 193, 7, 0.3);
+        }
+        
+        .cookie-upload-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .cookie-status {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border: 2px solid #28a745;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            text-align: center;
+            display: none;
+        }
+        
+        .cookie-status.show {
+            display: block;
+        }
+        
+        .cookie-status h4 {
+            margin: 0 0 8px 0;
+            color: #155724;
+        }
+        
+        .cookie-status p {
+            margin: 0;
+            color: #155724;
+            font-size: 0.9em;
+        }
+        
+        .instructions-toggle {
+            background: none;
+            border: none;
+            color: #e67e22;
+            text-decoration: underline;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+        
         .url-section {
             margin-bottom: 20px;
         }
@@ -439,7 +558,48 @@
         
         <div class="info-banner">
             <h3>🚀 How it works:</h3>
-            <p>Our server uses cookie authentication to bypass bot detection. Paste any YouTube URL and download directly to your device!</p>
+            <p>Server downloads may be limited by YouTube. Upload your browser cookies for enhanced success rate, or use manual commands as backup!</p>
+        </div>
+        
+        <div class="cookie-upload-section" id="cookieUploadSection">
+            <h3>
+                🍪 Enable Server Downloads
+                <button class="instructions-toggle" onclick="toggleInstructions()">
+                    <span id="instructionsToggleText">Show Instructions</span>
+                </button>
+            </h3>
+            
+            <div class="cookie-instructions" id="cookieInstructions" style="display: none;">
+                <strong>📋 How to get your YouTube cookies:</strong>
+                <ol>
+                    <li><strong>Easy Method:</strong> Install "Get cookies.txt LOCALLY" browser extension</li>
+                    <li>Go to YouTube.com and make sure you're logged in</li>
+                    <li>Click the extension icon and export cookies</li>
+                    <li>Copy and paste the cookie text below</li>
+                </ol>
+                <div style="background: rgba(52, 73, 94, 0.1); padding: 10px; border-radius: 8px; margin-top: 10px;">
+                    <strong>🔒 Security:</strong> Cookies are only stored temporarily (2 hours) and deleted after use.
+                </div>
+            </div>
+            
+            <textarea 
+                class="cookie-textarea" 
+                id="cookieTextarea" 
+                placeholder="# Netscape HTTP Cookie File
+youtube.com	FALSE	/	FALSE	1672531200	VISITOR_INFO1_LIVE	xyz123...
+.youtube.com	TRUE	/	FALSE	1672531200	YSC	abc456...
+
+Paste your YouTube cookies here to enable server downloads..."
+            ></textarea>
+            
+            <button class="cookie-upload-btn" id="cookieUploadBtn" onclick="uploadCookies()">
+                🚀 Upload Cookies & Enable Server Downloads
+            </button>
+            
+            <div class="cookie-status" id="cookieStatus">
+                <h4>✅ Cookies Uploaded Successfully!</h4>
+                <p>Server downloads are now enabled for 2 hours.</p>
+            </div>
         </div>
         
         <div class="auth-status" id="authStatus" style="display: none;">
@@ -481,10 +641,10 @@
             
             <div class="action-buttons">
                 <button type="submit" class="download-btn primary" id="downloadBtn">
-                    🚀 Start Download
+                    🚀 Start Server Download
                 </button>
                 <button type="button" class="download-btn secondary" id="commandBtn" onclick="generateCommand()">
-                    📋 Generate Command (Alternative)
+                    📋 Generate Manual Command
                 </button>
             </div>
         </form>
@@ -499,11 +659,11 @@
         </div>
         
         <div class="command-output" id="commandOutput">
-            <div class="command-header">📋 Alternative Command:</div>
+            <div class="command-header">📋 Manual Download Command:</div>
             <div class="command-text" id="commandText" onclick="copyCommand()"></div>
             <div class="copy-indicator" id="copyIndicator">Copied! ✓</div>
             <div style="margin-top: 15px; color: #bdc3c7; font-size: 12px;">
-                Install yt-dlp locally and run this command in your terminal
+                Install yt-dlp locally and run this command in your terminal/command prompt
             </div>
         </div>
     </div>
@@ -512,6 +672,8 @@
         let selectedQuality = 'best';
         let downloadInterval;
         let serverCapabilities = null;
+        let uploadedCookieId = null;
+        let showInstructions = false;
         
         // Check server capabilities on load
         async function checkServerCapabilities() {
@@ -533,22 +695,91 @@
             const indicator = document.getElementById('modeIndicator');
             const authStatus = document.getElementById('authStatus');
             const authMessage = document.getElementById('authMessage');
+            const cookieSection = document.getElementById('cookieUploadSection');
             
-            if (capabilities.ytdlp_available && capabilities.cookie_authentication) {
-                indicator.textContent = '🍪 Cookie Authentication Active - Direct Downloads Available!';
-                indicator.className = 'mode-indicator';
+            if (capabilities.ip_blocked || capabilities.manual_only) {
+                indicator.textContent = '⚠️ Server IP blocked by YouTube - Manual commands only';
+                indicator.className = 'mode-indicator error';
+                cookieSection.classList.add('show');
                 authStatus.style.display = 'block';
-                authMessage.textContent = 'Server authenticated with YouTube using cookies';
+                authMessage.textContent = 'Server IP blocked - upload cookies or use manual commands';
+            } else if (capabilities.ytdlp_available && capabilities.cookie_authentication) {
+                indicator.textContent = '🍪 Server Ready - Upload cookies for better success rate';
+                indicator.className = 'mode-indicator';
+                cookieSection.classList.add('show');
+                authStatus.style.display = 'block';
+                authMessage.textContent = 'Server available - real cookies recommended for downloads';
             } else if (capabilities.ytdlp_available) {
                 indicator.textContent = '⚡ Server Ready - Setting up authentication...';
                 indicator.className = 'mode-indicator loading';
+                cookieSection.classList.add('show');
                 authStatus.style.display = 'block';
-                authMessage.textContent = 'Initializing cookie authentication...';
+                authMessage.textContent = 'Initializing server authentication...';
             } else {
-                indicator.textContent = '📋 Command Generation Mode - Server limitations detected';
+                indicator.textContent = '📋 Manual Commands Only - Server limitations detected';
                 indicator.className = 'mode-indicator error';
+                cookieSection.classList.add('show');
                 authStatus.style.display = 'block';
                 authMessage.textContent = 'yt-dlp not available on server';
+            }
+        }
+        
+        function toggleInstructions() {
+            const instructions = document.getElementById('cookieInstructions');
+            const toggleText = document.getElementById('instructionsToggleText');
+            showInstructions = !showInstructions;
+            
+            if (showInstructions) {
+                instructions.style.display = 'block';
+                toggleText.textContent = 'Hide Instructions';
+            } else {
+                instructions.style.display = 'none';
+                toggleText.textContent = 'Show Instructions';
+            }
+        }
+        
+        async function uploadCookies() {
+            const textarea = document.getElementById('cookieTextarea');
+            const uploadBtn = document.getElementById('cookieUploadBtn');
+            const cookieStatus = document.getElementById('cookieStatus');
+            
+            const cookies = textarea.value.trim();
+            if (!cookies) {
+                showError('Please paste your YouTube cookies first');
+                return;
+            }
+            
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '🔄 Uploading cookies...';
+            
+            try {
+                const response = await fetch('/api/upload-cookies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookies })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    uploadedCookieId = data.cookieId;
+                    cookieStatus.classList.add('show');
+                    textarea.style.display = 'none';
+                    uploadBtn.style.display = 'none';
+                    
+                    // Update download button text
+                    const downloadBtn = document.getElementById('downloadBtn');
+                    downloadBtn.textContent = '🚀 Start Server Download (With Cookies)';
+                    
+                    showSuccess('✅ Cookies uploaded! Server downloads now have much higher success rate.');
+                } else {
+                    showError('Cookie upload failed: ' + data.error);
+                }
+            } catch (error) {
+                showError('Cookie upload error: ' + error.message);
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = '🚀 Upload Cookies & Enable Server Downloads';
             }
         }
         
@@ -635,12 +866,12 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    document.getElementById('commandText').textContent = data.command;
+                    document.getElementById('commandText').textContent = data.recommended || data.command;
                     document.getElementById('commandOutput').classList.add('show');
                     document.getElementById('commandOutput').scrollIntoView({ behavior: 'smooth' });
                     
                     // Auto-copy to clipboard
-                    await copyToClipboard(data.command);
+                    await copyToClipboard(data.recommended || data.command);
                 } else {
                     showError('Failed to generate command: ' + data.error);
                 }
@@ -663,6 +894,19 @@
             document.querySelector('.container').appendChild(errorDiv);
             
             setTimeout(() => errorDiv.remove(), 5000);
+        }
+        
+        function showSuccess(message) {
+            const existingSuccess = document.querySelector('.success-message');
+            if (existingSuccess) existingSuccess.remove();
+            
+            const successDiv = document.createElement('div');
+            successDiv.className = 'download-ready';
+            successDiv.style.margin = '15px 0';
+            successDiv.innerHTML = `<h3>${message}</h3>`;
+            document.querySelector('.container').appendChild(successDiv);
+            
+            setTimeout(() => successDiv.remove(), 5000);
         }
         
         async function copyCommand() {
@@ -693,10 +937,15 @@
             downloadBtn.textContent = '🔄 Starting Download...';
             
             try {
+                const requestBody = { url, quality: selectedQuality };
+                if (uploadedCookieId) {
+                    requestBody.cookieId = uploadedCookieId;
+                }
+                
                 const response = await fetch('/api/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, quality: selectedQuality })
+                    body: JSON.stringify(requestBody)
                 });
                 
                 const data = await response.json();
@@ -705,7 +954,14 @@
                     showProgressSection();
                     monitorDownload(data.downloadId);
                 } else {
-                    throw new Error(data.error);
+                    // Check if it's a cookie requirement error
+                    if (data.error && data.error.includes('cookies')) {
+                        showError(data.error + '\n\nTip: Upload your browser cookies above or use the manual command.');
+                        // Scroll to cookie upload section
+                        document.getElementById('cookieUploadSection').scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                        throw new Error(data.error);
+                    }
                 }
                 
             } catch (error) {
@@ -747,11 +1003,15 @@
             const readySection = document.getElementById('downloadReadySection');
             
             if (status.status === 'starting') {
-                title.textContent = 'Initializing download with authentication...';
+                title.textContent = uploadedCookieId ? 
+                    'Initializing download with your cookies...' : 
+                    'Attempting download without cookies...';
                 fill.style.width = '10%';
                 text.textContent = 'Starting...';
             } else if (status.status === 'downloading') {
-                title.textContent = 'Downloading with cookie authentication...';
+                title.textContent = uploadedCookieId ? 
+                    'Downloading with cookie authentication...' : 
+                    'Downloading (may fail without cookies)...';
                 const progress = status.progress || 0;
                 fill.style.width = `${progress}%`;
                 text.textContent = `${Math.round(progress)}%`;
@@ -769,17 +1029,32 @@
                     </div>
                 `;
             } else if (status.status === 'error') {
-                title.textContent = '❌ Download Failed';
+                title.textContent = '❌ Server Download Failed';
                 fill.style.width = '0%';
                 text.textContent = 'Error occurred';
-                showError(status.error || 'Download failed. Try the command generation option.');
+                
+                let errorMessage = status.error || 'Download failed';
+                if (status.manual_command) {
+                    errorMessage += '\n\nManual command available below.';
+                    // Auto-generate and show manual command
+                    generateCommand();
+                }
+                
+                showError(errorMessage);
+                
+                if (!uploadedCookieId && status.error && status.error.includes('bot')) {
+                    showError('💡 Tip: Upload your browser cookies above for much higher success rate!');
+                    document.getElementById('cookieUploadSection').scrollIntoView({ behavior: 'smooth' });
+                }
             }
         }
         
         function resetDownloadButton() {
             const downloadBtn = document.getElementById('downloadBtn');
             downloadBtn.disabled = false;
-            downloadBtn.textContent = '🚀 Start Download';
+            downloadBtn.textContent = uploadedCookieId ? 
+                '🚀 Start Server Download (With Cookies)' : 
+                '🚀 Start Server Download';
         }
         
         // Initialize app
