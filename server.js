@@ -41,6 +41,8 @@ let ytDlpPath = 'yt-dlp';
 let directDownloadAttempts = 0;
 let successfulDownloads = 0;
 let serverReady = false;
+let ipBlocked = false;
+let lastRateLimitTime = 0;
 
 // Cookie file management
 let cookieFilePath = '/tmp/youtube_cookies.txt';
@@ -59,6 +61,21 @@ const getRandomUserAgent = () => {
   const agent = userAgents[currentUserAgentIndex];
   currentUserAgentIndex = (currentUserAgentIndex + 1) % userAgents.length;
   return agent;
+};
+
+// Check if server IP is blocked
+const checkIPBlocked = (errorMessage) => {
+  const blockIndicators = [
+    'HTTP Error 429',
+    'Too Many Requests',
+    'This content isn\'t available',
+    'Sign in to confirm you\'re not a bot',
+    'Unable to download webpage',
+    'Forbidden',
+    'Access denied'
+  ];
+  
+  return blockIndicators.some(indicator => errorMessage.includes(indicator));
 };
 
 // FIXED: Create Netscape cookie file format with correct domain_specified values
@@ -289,6 +306,11 @@ const getVideoInfoWithCookieFile = async (url) => {
     throw new Error('yt-dlp not available');
   }
 
+  // Check if IP is blocked
+  if (ipBlocked) {
+    throw new Error('Server IP blocked by YouTube - use manual commands');
+  }
+
   console.log(`🔍 Getting video info with cookie file: ${url}`);
   
   const cookieFile = await getFreshCookieFile();
@@ -336,9 +358,10 @@ const getVideoInfoWithCookieFile = async (url) => {
         }
       } else {
         console.error('Video info error:', errorData);
-        if (errorData.includes('Sign in to confirm')) {
-          console.log('🔄 Bot detection, will refresh cookie file');
-          cookieFileExpiry = 0; // Force refresh next time
+        if (checkIPBlocked(errorData)) {
+          console.log('🚫 IP blocked detected, switching to manual-only mode');
+          ipBlocked = true;
+          lastRateLimitTime = Date.now();
         }
         reject(new Error('Failed to get video info'));
       }
@@ -352,14 +375,25 @@ const getVideoInfoWithCookieFile = async (url) => {
   });
 };
 
-// Enhanced download with better bot detection evasion
+// Smart download with IP block detection
 const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
   if (!ytDlpAvailable) {
     throw new Error('yt-dlp not available');
   }
 
+  // Check if IP is blocked
+  if (ipBlocked) {
+    downloadStatus.set(downloadId, { 
+      status: 'error', 
+      error: 'Server IP blocked by YouTube. Use manual download.',
+      fallback: true,
+      manual_command: `yt-dlp --cookies-from-browser chrome "${url}"`
+    });
+    throw new Error('Server IP blocked by YouTube - manual download required');
+  }
+
   directDownloadAttempts++;
-  console.log(`⬇️ Starting download with enhanced bot evasion: ${downloadId}`);
+  console.log(`⬇️ Starting download with IP block detection: ${downloadId}`);
   
   const filename = `${downloadId}.%(ext)s`;
   const outputPath = `/tmp/downloads/${filename}`;
@@ -371,22 +405,18 @@ const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
     // Directory exists
   }
   
-  // Enhanced strategies with better bot evasion
+  // Simplified strategy focused on what works
   const strategies = [
     {
-      name: 'enhanced_web',
+      name: 'light_touch',
       getArgs: async () => {
         const cookieFile = await getFreshCookieFile();
         const args = [
           '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-          '--sleep-interval', '3', '--max-sleep-interval', '8',
-          '--retries', '5', '--fragment-retries', '5',
-          '--extractor-args', 'youtube:player_client=web',
-          '--add-header', 'Accept-Language:en-US,en;q=0.9',
-          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          '--add-header', 'DNT:1',
-          '--add-header', 'Upgrade-Insecure-Requests:1'
+          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          '--sleep-interval', '10', '--max-sleep-interval', '20',
+          '--retries', '1', '--fragment-retries', '1',
+          '--extractor-args', 'youtube:player_client=android_testsuite'
         ];
         
         if (cookieFile) {
@@ -395,62 +425,12 @@ const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
         
         return args;
       }
-    },
-    {
-      name: 'android_tv',
-      getArgs: async () => [
-        '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-        '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SHIELD Android TV) gzip',
-        '--sleep-interval', '4', '--max-sleep-interval', '10',
-        '--retries', '5', '--fragment-retries', '5',
-        '--extractor-args', 'youtube:player_client=android_testsuite'
-      ]
-    },
-    {
-      name: 'web_embedded',
-      getArgs: async () => {
-        const cookieFile = await getFreshCookieFile();
-        const args = [
-          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-          '--sleep-interval', '5', '--max-sleep-interval', '12',
-          '--retries', '3', '--fragment-retries', '3',
-          '--extractor-args', 'youtube:player_client=web_embedded',
-          '--add-header', 'Referer:https://www.youtube.com/'
-        ];
-        
-        if (cookieFile) {
-          args.push('--cookies', cookieFile);
-        }
-        
-        return args;
-      }
-    },
-    {
-      name: 'age_gate_bypass',
-      getArgs: async () => [
-        '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-        '--user-agent', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        '--sleep-interval', '6', '--max-sleep-interval', '15',
-        '--retries', '3', '--fragment-retries', '3',
-        '--extractor-args', 'youtube:player_client=web_music'
-      ]
-    },
-    {
-      name: 'fallback_generic',
-      getArgs: async () => [
-        '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
-        '--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        '--sleep-interval', '8', '--max-sleep-interval', '20',
-        '--retries', '2', '--fragment-retries', '2',
-        '--force-generic-extractor'
-      ]
     }
   ];
   
   for (const strategy of strategies) {
     try {
-      console.log(`🔧 Trying ${strategy.name} strategy...`);
+      console.log(`🔧 Trying ${strategy.name} strategy with minimal footprint...`);
       
       const args = await strategy.getArgs();
       
@@ -490,8 +470,10 @@ const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
           const error = data.toString();
           console.error(`${strategy.name} stderr:`, error.trim());
           
-          if (error.includes('Sign in to confirm') || error.includes('not a bot')) {
-            console.log(`🤖 Bot detection on ${strategy.name} - will try next strategy`);
+          if (checkIPBlocked(error)) {
+            console.log('🚫 IP blocked detected during download');
+            ipBlocked = true;
+            lastRateLimitTime = Date.now();
           }
         });
         
@@ -505,11 +487,11 @@ const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
           }
         });
         
-        // Longer timeout for slower strategies
+        // Longer timeout for more patience
         setTimeout(() => {
           ytdlp.kill();
           strategyReject(new Error(`${strategy.name} timeout`));
-        }, 240000); // 4 minutes per strategy
+        }, 300000); // 5 minutes
       });
       
       // Success!
@@ -524,33 +506,28 @@ const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
     } catch (error) {
       console.log(`❌ ${strategy.name} failed:`, error.message);
       downloadStatus.set(downloadId, {
-        status: 'retrying',
-        progress: 0,
+        status: 'error',
         attempted_strategy: strategy.name,
         error: error.message
       });
-      
-      // Add delay between failed strategies to avoid rapid requests
-      if (strategy.name !== 'fallback_generic') {
-        console.log('⏳ Waiting 10 seconds before next strategy...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-      }
-      continue;
+      break; // Don't try more strategies, likely IP blocked
     }
   }
   
-  // All strategies failed - provide fallback options
-  console.log('🔄 All strategies failed, providing fallback instructions');
-  cookieFileExpiry = 0; // Force refresh next time
+  // Failed - likely IP blocked
+  console.log('🚫 Download failed - server IP likely blocked by YouTube');
+  ipBlocked = true;
+  lastRateLimitTime = Date.now();
   
   downloadStatus.set(downloadId, { 
     status: 'error', 
-    error: 'Server detected as bot by YouTube. Use manual command instead.',
+    error: 'Server IP blocked by YouTube. Use manual download with browser cookies.',
     fallback: true,
-    manual_command: `yt-dlp --cookies-from-browser chrome "${url}"`
+    manual_command: `yt-dlp --cookies-from-browser chrome "${url}"`,
+    ip_blocked: true
   });
   
-  throw new Error('All download strategies failed - server detected as bot');
+  throw new Error('Server IP blocked by YouTube - manual download required');
 };
 
 // Immediate health check endpoint (critical for Render)
@@ -574,6 +551,8 @@ app.get('/api/health', (req, res) => {
     server_ready: serverReady,
     cookie_file_active: Date.now() < cookieFileExpiry,
     cookie_file_path: cookieFilePath,
+    ip_blocked: ipBlocked,
+    last_rate_limit: lastRateLimitTime,
     download_stats: {
       attempts: directDownloadAttempts,
       successful: successfulDownloads,
@@ -589,12 +568,14 @@ app.get('/api/capabilities', (req, res) => {
     server_ready: serverReady,
     cookie_file_active: Date.now() < cookieFileExpiry,
     cookie_authentication: true,
+    ip_blocked: ipBlocked,
+    manual_only: ipBlocked,
     features: {
-      video_info: ytDlpAvailable,
-      video_download: ytDlpAvailable,
+      video_info: ytDlpAvailable && !ipBlocked,
+      video_download: ytDlpAvailable && !ipBlocked,
       command_generation: true,
       cookie_file: true,
-      multi_strategy: true
+      manual_commands: true
     },
     download_stats: {
       attempts: directDownloadAttempts,
@@ -604,21 +585,27 @@ app.get('/api/capabilities', (req, res) => {
   });
 });
 
-// New endpoint for bot detection status
+// Enhanced bot detection status
 app.get('/api/bot-status', (req, res) => {
   const recentAttempts = directDownloadAttempts;
   const recentSuccesses = successfulDownloads;
   const successRate = recentAttempts > 0 ? (recentSuccesses / recentAttempts * 100) : 0;
   
   res.json({
-    bot_detected: successRate < 20, // Consider bot detected if success rate below 20%
+    ip_blocked: ipBlocked,
+    rate_limited: Date.now() - lastRateLimitTime < 3600000, // Within last hour
+    bot_detected: ipBlocked || successRate < 10,
     success_rate: successRate.toFixed(1) + '%',
     total_attempts: recentAttempts,
     successful_downloads: recentSuccesses,
-    recommendation: successRate < 20 ? 
-      'Use manual commands with browser cookies due to bot detection' : 
+    last_block_time: lastRateLimitTime,
+    status: ipBlocked ? 'IP_BLOCKED' : successRate < 10 ? 'BOT_DETECTED' : 'OK',
+    recommendation: ipBlocked ? 
+      'Server IP blocked by YouTube. Use manual download commands.' : 
+      successRate < 10 ? 
+      'Low success rate - use manual commands with browser cookies' :
       'Server downloads working normally',
-    manual_command_needed: successRate < 20
+    manual_command_required: ipBlocked || successRate < 10
   });
 });
 
@@ -652,12 +639,32 @@ app.post('/api/info', async (req, res) => {
       });
     }
     
+    if (ipBlocked) {
+      const basicInfo = {
+        title: `YouTube Video (${extractVideoId(url) || 'Unknown'})`,
+        duration: 0,
+        uploader: 'YouTube',
+        view_count: 0,
+        thumbnail: `https://img.youtube.com/vi/${extractVideoId(url)}/maxresdefault.jpg`,
+        webpage_url: url,
+        fallback: true,
+        ip_blocked: true
+      };
+      
+      return res.json({ 
+        success: true, 
+        ...basicInfo,
+        message: 'Server IP blocked - using basic info. Use manual commands for download.',
+        manual_required: true
+      });
+    }
+    
     try {
       const info = await getVideoInfoWithCookieFile(url);
       res.json({ 
         success: true, 
         ...info,
-        message: 'Video info retrieved with cookie file authentication'
+        message: 'Video info retrieved successfully'
       });
     } catch (error) {
       console.error('Video info error:', error);
@@ -708,22 +715,34 @@ app.post('/api/download', async (req, res) => {
       });
     }
     
+    if (ipBlocked) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Server IP blocked by YouTube. Use manual download commands.',
+        ip_blocked: true,
+        manual_command: `yt-dlp --cookies-from-browser chrome "${url}"`,
+        fallback: true
+      });
+    }
+    
     const downloadId = uuidv4();
     downloadStatus.set(downloadId, { status: 'starting' });
     
-    // Start download with cookie file
+    // Start download with IP block detection
     downloadVideoWithCookieFile(url, quality, downloadId).catch(err => {
       console.error('Download error:', err);
       downloadStatus.set(downloadId, { 
         status: 'error', 
-        error: err.message
+        error: err.message,
+        ip_blocked: ipBlocked
       });
     });
     
     res.json({ 
       success: true, 
       downloadId,
-      message: 'Download started with enhanced bot evasion'
+      message: 'Download started with IP block detection',
+      warning: 'Server downloads may fail due to YouTube rate limiting'
     });
     
   } catch (error) {
@@ -797,7 +816,7 @@ app.get('/api/file/:downloadId', async (req, res) => {
   }
 });
 
-// Enhanced command generation with bot detection workarounds
+// Enhanced command generation with IP block awareness
 app.post('/api/command', (req, res) => {
   try {
     const { url, quality } = req.body;
@@ -823,24 +842,42 @@ app.post('/api/command', (req, res) => {
       withFirefoxCookies: baseCommand.replace('yt-dlp ', 'yt-dlp --cookies-from-browser firefox '),
       enhanced: baseCommand.replace('yt-dlp ', 'yt-dlp --cookies-from-browser chrome --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --sleep-interval 3 --retries 5 '),
       androidClient: baseCommand.replace('yt-dlp ', 'yt-dlp --extractor-args "youtube:player_client=android" '),
-      webEmbedded: baseCommand.replace('yt-dlp ', 'yt-dlp --extractor-args "youtube:player_client=web_embedded" --add-header "Referer:https://www.youtube.com/" ')
+      webEmbedded: baseCommand.replace('yt-dlp ', 'yt-dlp --extractor-args "youtube:player_client=web_embedded" --add-header "Referer:https://www.youtube.com/" '),
+      safariCookies: baseCommand.replace('yt-dlp ', 'yt-dlp --cookies-from-browser safari '),
+      edgeCookies: baseCommand.replace('yt-dlp ', 'yt-dlp --cookies-from-browser edge ')
     };
+    
+    const serverStatus = ipBlocked ? 'IP_BLOCKED' : 'AVAILABLE';
     
     res.json({
       success: true,
+      server_status: serverStatus,
       recommended: commands.withBrowserCookies,
       commands: commands,
-      message: 'Multiple command options generated',
+      message: ipBlocked ? 
+        'Server IP blocked - manual download required' : 
+        'Multiple command options generated',
       instructions: [
-        'If server downloads fail due to bot detection, use these manual commands:',
-        '1. Try "withBrowserCookies" first (requires Chrome browser with YouTube login)',
-        '2. If Chrome cookies fail, try "withFirefoxCookies"',
-        '3. For stubborn videos, use "enhanced" with delays',
-        '4. For age-restricted content, try "androidClient"'
+        ipBlocked ? 
+          '⚠️ SERVER IP BLOCKED: Server downloads disabled. Use manual commands below:' :
+          'If server downloads fail, try these manual commands:',
+        '1. "withBrowserCookies" - Best option (requires Chrome with YouTube login)',
+        '2. "withFirefoxCookies" - Alternative browser cookies',
+        '3. "safariCookies" or "edgeCookies" - Other browser options',
+        '4. "enhanced" - With delays and retries for stubborn videos',
+        '5. "androidClient" - For age-restricted content'
       ],
       troubleshooting: {
-        bot_detection: 'YouTube detected server as bot - manual download required',
-        solution: 'Use command with --cookies-from-browser to authenticate with your browser cookies'
+        ip_blocked: ipBlocked,
+        solution: ipBlocked ? 
+          'Manual download required - server IP blocked by YouTube' :
+          'Use command with --cookies-from-browser to authenticate with your browser cookies',
+        note: 'Browser must be logged into YouTube for cookie authentication to work'
+      },
+      installation: {
+        windows: 'Download yt-dlp.exe from https://github.com/yt-dlp/yt-dlp/releases',
+        mac: 'brew install yt-dlp',
+        linux: 'sudo apt install yt-dlp or pip install yt-dlp'
       }
     });
     
@@ -848,6 +885,30 @@ app.post('/api/command', (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message 
+    });
+  }
+});
+
+// Reset IP block status (for testing/recovery)
+app.post('/api/reset-ip-block', (req, res) => {
+  const timeSinceBlock = Date.now() - lastRateLimitTime;
+  const canReset = timeSinceBlock > 3600000; // 1 hour
+  
+  if (canReset || req.body.force) {
+    ipBlocked = false;
+    lastRateLimitTime = 0;
+    console.log('🔄 IP block status reset');
+    res.json({
+      success: true,
+      message: 'IP block status reset',
+      note: 'Next download attempt will test server availability'
+    });
+  } else {
+    res.json({
+      success: false,
+      message: 'Cannot reset IP block yet',
+      time_remaining: Math.ceil((3600000 - timeSinceBlock) / 60000) + ' minutes',
+      note: 'Wait at least 1 hour before resetting, or use force=true'
     });
   }
 });
@@ -877,6 +938,14 @@ setInterval(async () => {
         // File may not exist
       }
     }
+    
+    // Auto-reset IP block after 4 hours
+    if (ipBlocked && (Date.now() - lastRateLimitTime) > 14400000) {
+      console.log('🔄 Auto-resetting IP block after 4 hours');
+      ipBlocked = false;
+      lastRateLimitTime = 0;
+    }
+    
   } catch (error) {
     console.error('Auto-cleanup error:', error);
   }
@@ -904,6 +973,7 @@ const server = app.listen(port, () => {
         console.log('🍪 Initializing YouTube cookie file...');
         await establishRealSessionFile();
         console.log('🎯 Enhanced cookie file authentication ready!');
+        console.log('⚠️  Note: Server IP may be rate-limited by YouTube');
       }
     }, 3000);
   }, 1000);
