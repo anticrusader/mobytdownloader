@@ -1,7 +1,7 @@
 {
   "name": "youtube-direct-downloader",
   "version": "1.0.0",
-  "description": "Direct YouTube video downloader with server-side yt-dlp and cookie authentication",
+  "description": "Direct YouTube video downloader with server-side yt-dlp",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,13 +12,12 @@
     "compression": "^1.7.4",
     "helmet": "^7.0.0",
     "uuid": "^9.0.0",
-    "cors": "^2.8.5",
-    "puppeteer": "^21.5.0"
+    "cors": "^2.8.5"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["youtube", "downloader", "yt-dlp", "direct-download", "cookie-auth"],
+  "keywords": ["youtube", "downloader", "yt-dlp", "direct-download"],
   "author": "Your Name",
   "license": "MIT"
 }
