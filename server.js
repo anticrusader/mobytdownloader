@@ -42,14 +42,13 @@ let directDownloadAttempts = 0;
 let successfulDownloads = 0;
 let serverReady = false;
 
-// Real session management
-let realSessionCookies = '';
-let sessionExpiry = 0;
+// Cookie file management
+let cookieFilePath = '/tmp/youtube_cookies.txt';
+let cookieFileExpiry = 0;
 
 // Enhanced User Agents for rotation
 const userAgents = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ];
@@ -62,8 +61,54 @@ const getRandomUserAgent = () => {
   return agent;
 };
 
-// Establish real YouTube session
-const establishRealSession = async () => {
+// Create Netscape cookie file format
+const createNetscapeCookieFile = async (cookies) => {
+  const cookieLines = ['# Netscape HTTP Cookie File'];
+  
+  cookies.forEach(cookie => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      const name = parts[0].trim();
+      const value = parts.slice(1).join('=').trim();
+      const expires = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
+      
+      // Format: domain, domain_specified, path, secure, expires, name, value
+      cookieLines.push(`youtube.com\tTRUE\t/\tTRUE\t${expires}\t${name}\t${value}`);
+      cookieLines.push(`.youtube.com\tTRUE\t/\tTRUE\t${expires}\t${name}\t${value}`);
+    }
+  });
+  
+  try {
+    await fs.writeFile(cookieFilePath, cookieLines.join('\n'));
+    cookieFileExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
+    console.log(`✅ Cookie file created with ${cookies.length} cookies`);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to create cookie file:', error);
+    return false;
+  }
+};
+
+// Create enhanced fallback cookie file
+const createFallbackCookieFile = async () => {
+  const timestamp = Date.now();
+  const sessionId = Math.random().toString(36).substring(2, 15);
+  const visitorId = 'CgtQbXJILVdxaU5uYyiQmqK0BjIKCgJVUxIEGgAgEQ%3D%3D';
+  
+  const fallbackCookies = [
+    `VISITOR_INFO1_LIVE=${visitorId}`,
+    `YSC=${sessionId}`,
+    `PREF=f1=50000000&f6=40000000&hl=en-US&gl=US`,
+    `CONSENT=YES+srp.gws-20211028-0-RC2.en+FX+667`,
+    `GPS=1`,
+    `SOCS=CAESAggC`
+  ];
+  
+  return await createNetscapeCookieFile(fallbackCookies);
+};
+
+// Establish real YouTube session and create cookie file
+const establishRealSessionFile = async () => {
   return new Promise((resolve, reject) => {
     console.log('🍪 Establishing real YouTube session...');
     
@@ -73,7 +118,7 @@ const establishRealSession = async () => {
       path: '/',
       method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'User-Agent': getRandomUserAgent(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
@@ -88,8 +133,7 @@ const establishRealSession = async () => {
       }
     };
 
-    const req = https.request(options, (res) => {
-      let data = '';
+    const req = https.request(options, async (res) => {
       let cookies = [];
       
       // Extract cookies from response headers
@@ -99,70 +143,59 @@ const establishRealSession = async () => {
         });
       }
       
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
+      res.on('data', () => {}); // Consume data
       
-      res.on('end', () => {
+      res.on('end', async () => {
         if (cookies.length > 0) {
-          realSessionCookies = cookies.join('; ');
-          sessionExpiry = Date.now() + (2 * 60 * 60 * 1000); // 2 hours
-          console.log(`✅ Real session established with ${cookies.length} cookies`);
-          resolve(realSessionCookies);
+          const success = await createNetscapeCookieFile(cookies);
+          if (success) {
+            console.log(`✅ Real session file created with ${cookies.length} cookies`);
+            resolve(true);
+          } else {
+            console.log('⚠️  Real cookies failed, using fallback');
+            const fallbackSuccess = await createFallbackCookieFile();
+            resolve(fallbackSuccess);
+          }
         } else {
-          console.log('⚠️  No cookies received, using enhanced fallback');
-          realSessionCookies = createEnhancedSessionCookies();
-          sessionExpiry = Date.now() + (1 * 60 * 60 * 1000); // 1 hour for fallback
-          resolve(realSessionCookies);
+          console.log('⚠️  No cookies received, using fallback');
+          const fallbackSuccess = await createFallbackCookieFile();
+          resolve(fallbackSuccess);
         }
       });
     });
 
-    req.on('error', (err) => {
+    req.on('error', async (err) => {
       console.error('Session establishment error:', err);
-      realSessionCookies = createEnhancedSessionCookies();
-      sessionExpiry = Date.now() + (1 * 60 * 60 * 1000);
-      resolve(realSessionCookies);
+      const fallbackSuccess = await createFallbackCookieFile();
+      resolve(fallbackSuccess);
     });
     
-    req.setTimeout(10000, () => {
+    req.setTimeout(8000, async () => {
       console.log('⚠️  Session request timeout, using fallback');
       req.destroy();
-      realSessionCookies = createEnhancedSessionCookies();
-      sessionExpiry = Date.now() + (1 * 60 * 60 * 1000);
-      resolve(realSessionCookies);
+      const fallbackSuccess = await createFallbackCookieFile();
+      resolve(fallbackSuccess);
     });
 
     req.end();
   });
 };
 
-// Enhanced session cookies with realistic values
-const createEnhancedSessionCookies = () => {
-  const timestamp = Date.now();
-  const sessionId = Math.random().toString(36).substring(2, 15);
-  const visitorId = 'CgtQbXJILVdxaU5uYyiQmqK0BjIKCgJVUxIEGgAgEQ%3D%3D';
-  
-  return [
-    `VISITOR_INFO1_LIVE=${visitorId}`,
-    `YSC=${sessionId}`,
-    `PREF=f1=50000000&f6=40000000&hl=en-US&gl=US`,
-    `CONSENT=YES+srp.gws-20211028-0-RC2.en+FX+667`,
-    `GPS=1`,
-    `SOCS=CAESAggC`,
-    `__Secure-3PSID=${sessionId}_${timestamp}`,
-    `__Secure-3PAPISID=${sessionId}_${timestamp}`,
-    `SIDCC=ACA-OxNvI2pwchHONLCjNZq8cSHPpCOa${timestamp}`
-  ].join('; ');
-};
-
-// Get fresh session cookies
-const getFreshSessionCookies = async () => {
-  if (!realSessionCookies || Date.now() > sessionExpiry) {
-    console.log('🔄 Refreshing session cookies...');
-    realSessionCookies = await establishRealSession();
+// Get fresh cookie file
+const getFreshCookieFile = async () => {
+  // Check if cookie file exists and is not expired
+  try {
+    const stats = await fs.stat(cookieFilePath);
+    if (Date.now() < cookieFileExpiry && stats.size > 0) {
+      return cookieFilePath;
+    }
+  } catch (error) {
+    // File doesn't exist, create new one
   }
-  return realSessionCookies;
+  
+  console.log('🔄 Refreshing cookie file...');
+  const success = await establishRealSessionFile();
+  return success ? cookieFilePath : null;
 };
 
 // Extract video ID from URL
@@ -212,30 +245,29 @@ const installYtDlpBackground = () => {
   });
 };
 
-// Enhanced video info with real cookies
-const getVideoInfoWithRealCookies = async (url) => {
+// Enhanced video info with cookie file
+const getVideoInfoWithCookieFile = async (url) => {
   if (!ytDlpAvailable) {
     throw new Error('yt-dlp not available');
   }
 
-  console.log(`🔍 Getting video info with real session: ${url}`);
+  console.log(`🔍 Getting video info with cookie file: ${url}`);
   
-  const sessionCookies = await getFreshSessionCookies();
+  const cookieFile = await getFreshCookieFile();
   
   return new Promise((resolve, reject) => {
     const args = [
       '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
       '--user-agent', getRandomUserAgent(),
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      '--add-header', 'Sec-Fetch-Mode:navigate',
-      '--add-header', 'Sec-Fetch-Site:none',
-      '--add-header', 'Sec-Fetch-User:?1',
-      '--add-header', `Cookie: ${sessionCookies}`,
-      '--extractor-args', 'youtube:player_client=web',
-      '--sleep-interval', '1',
-      url
+      '--extractor-args', 'youtube:player_client=web'
     ];
+    
+    // Add cookie file if available
+    if (cookieFile) {
+      args.push('--cookies', cookieFile);
+    }
+    
+    args.push(url);
     
     const ytdlp = spawn(ytDlpPath, args);
     let data = '';
@@ -267,29 +299,29 @@ const getVideoInfoWithRealCookies = async (url) => {
       } else {
         console.error('Video info error:', errorData);
         if (errorData.includes('Sign in to confirm')) {
-          console.log('🔄 Bot detection, refreshing session...');
-          realSessionCookies = '';
-          sessionExpiry = 0;
+          console.log('🔄 Bot detection, will refresh cookie file');
+          cookieFileExpiry = 0; // Force refresh next time
         }
-        reject(new Error('Failed to get video info - refreshing session'));
+        reject(new Error('Failed to get video info'));
       }
     });
 
+    // Reduced timeout for faster response
     setTimeout(() => {
       ytdlp.kill();
       reject(new Error('Video info timeout'));
-    }, 20000);
+    }, 12000);
   });
 };
 
-// Enhanced download with real cookies and fallback strategies
-const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
+// Enhanced download with cookie file and multiple strategies
+const downloadVideoWithCookieFile = async (url, quality, downloadId) => {
   if (!ytDlpAvailable) {
     throw new Error('yt-dlp not available');
   }
 
   directDownloadAttempts++;
-  console.log(`⬇️ Starting download with real cookies: ${downloadId}`);
+  console.log(`⬇️ Starting download with cookie file: ${downloadId}`);
   
   const filename = `${downloadId}.%(ext)s`;
   const outputPath = `/tmp/downloads/${filename}`;
@@ -303,22 +335,22 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
   
   const strategies = [
     {
-      name: 'real_cookies_web',
+      name: 'cookie_file_web',
       getArgs: async () => {
-        const sessionCookies = await getFreshSessionCookies();
-        return [
+        const cookieFile = await getFreshCookieFile();
+        const args = [
           '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
           '--user-agent', getRandomUserAgent(),
-          '--add-header', 'Accept-Language:en-US,en;q=0.9',
-          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          '--add-header', 'Sec-Fetch-Mode:navigate',
-          '--add-header', 'Sec-Fetch-Site:none',
-          '--add-header', 'Sec-Fetch-User:?1',
-          '--add-header', `Cookie: ${sessionCookies}`,
-          '--sleep-interval', '2', '--max-sleep-interval', '4',
-          '--retries', '3', '--fragment-retries', '3',
+          '--sleep-interval', '1', '--max-sleep-interval', '3',
+          '--retries', '2', '--fragment-retries', '2',
           '--extractor-args', 'youtube:player_client=web'
         ];
+        
+        if (cookieFile) {
+          args.push('--cookies', cookieFile);
+        }
+        
+        return args;
       }
     },
     {
@@ -326,8 +358,8 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
       getArgs: async () => [
         '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
         '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SM-G981B) gzip',
-        '--sleep-interval', '3', '--max-sleep-interval', '6',
-        '--retries', '5', '--fragment-retries', '5',
+        '--sleep-interval', '2', '--max-sleep-interval', '4',
+        '--retries', '3', '--fragment-retries', '3',
         '--extractor-args', 'youtube:player_client=android'
       ]
     },
@@ -336,8 +368,8 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
       getArgs: async () => [
         '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
         '--user-agent', 'com.google.ios.youtube/18.11.2 (iPhone14,3; U; CPU iOS 16_4 like Mac OS X)',
-        '--sleep-interval', '4', '--max-sleep-interval', '8',
-        '--retries', '7', '--fragment-retries', '7',
+        '--sleep-interval', '2', '--max-sleep-interval', '4',
+        '--retries', '3', '--fragment-retries', '3',
         '--extractor-args', 'youtube:player_client=ios'
       ]
     }
@@ -368,6 +400,8 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
         
         ytdlp.stdout.on('data', (data) => {
           const output = data.toString();
+          console.log(`${strategy.name} output:`, output.trim());
+          
           const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
           if (progressMatch) {
             const progress = parseFloat(progressMatch[1]);
@@ -381,7 +415,8 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
         
         ytdlp.stderr.on('data', (data) => {
           const error = data.toString();
-          console.error(`${strategy.name} stderr:`, error);
+          console.error(`${strategy.name} stderr:`, error.trim());
+          
           if (error.includes('Sign in to confirm')) {
             console.log(`🤖 Bot detection on ${strategy.name} - will try next strategy`);
           }
@@ -397,10 +432,11 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
           }
         });
         
+        // Shorter timeout per strategy
         setTimeout(() => {
           ytdlp.kill();
           strategyReject(new Error(`${strategy.name} timeout`));
-        }, 300000); // 5 minutes per strategy
+        }, 180000); // 3 minutes per strategy
       });
       
       // Success!
@@ -424,14 +460,13 @@ const downloadVideoWithRealCookies = async (url, quality, downloadId) => {
     }
   }
   
-  // All strategies failed - refresh session for next time
-  console.log('🔄 All strategies failed, refreshing session for future attempts');
-  realSessionCookies = '';
-  sessionExpiry = 0;
+  // All strategies failed - force refresh cookie file for next time
+  console.log('🔄 All strategies failed, will refresh cookie file for future attempts');
+  cookieFileExpiry = 0;
   
   downloadStatus.set(downloadId, { 
     status: 'error', 
-    error: 'All download strategies failed. Server IP may be blocked.',
+    error: 'All download strategies failed. YouTube may be blocking server IPs.',
     fallback: true
   });
   
@@ -444,8 +479,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     server_ready: serverReady,
-    ytdlp_available: ytDlpAvailable,
-    session_active: !!realSessionCookies
+    ytdlp_available: ytDlpAvailable
   });
 });
 
@@ -458,8 +492,8 @@ app.get('/api/health', (req, res) => {
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
     server_ready: serverReady,
-    session_active: !!realSessionCookies,
-    session_expiry: sessionExpiry > 0 ? new Date(sessionExpiry).toISOString() : null,
+    cookie_file_active: Date.now() < cookieFileExpiry,
+    cookie_file_path: cookieFilePath,
     download_stats: {
       attempts: directDownloadAttempts,
       successful: successfulDownloads,
@@ -473,13 +507,13 @@ app.get('/api/capabilities', (req, res) => {
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
     server_ready: serverReady,
-    session_active: !!realSessionCookies,
-    real_cookies: true,
+    cookie_file_active: Date.now() < cookieFileExpiry,
+    cookie_authentication: true,
     features: {
       video_info: ytDlpAvailable,
       video_download: ytDlpAvailable,
       command_generation: true,
-      real_session: true,
+      cookie_file: true,
       multi_strategy: true
     },
     download_stats: {
@@ -521,11 +555,11 @@ app.post('/api/info', async (req, res) => {
     }
     
     try {
-      const info = await getVideoInfoWithRealCookies(url);
+      const info = await getVideoInfoWithCookieFile(url);
       res.json({ 
         success: true, 
         ...info,
-        message: 'Video info retrieved with real session cookies'
+        message: 'Video info retrieved with cookie file authentication'
       });
     } catch (error) {
       console.error('Video info error:', error);
@@ -543,7 +577,7 @@ app.post('/api/info', async (req, res) => {
       res.json({ 
         success: true, 
         ...basicInfo,
-        message: 'Using basic info due to session issues',
+        message: 'Using basic info due to API limitations',
         error: error.message
       });
     }
@@ -579,8 +613,8 @@ app.post('/api/download', async (req, res) => {
     const downloadId = uuidv4();
     downloadStatus.set(downloadId, { status: 'starting' });
     
-    // Start download with real cookies
-    downloadVideoWithRealCookies(url, quality, downloadId).catch(err => {
+    // Start download with cookie file
+    downloadVideoWithCookieFile(url, quality, downloadId).catch(err => {
       console.error('Download error:', err);
       downloadStatus.set(downloadId, { 
         status: 'error', 
@@ -591,7 +625,7 @@ app.post('/api/download', async (req, res) => {
     res.json({ 
       success: true, 
       downloadId,
-      message: 'Download started with real session authentication'
+      message: 'Download started with cookie file authentication'
     });
     
   } catch (error) {
@@ -696,7 +730,7 @@ app.post('/api/command', (req, res) => {
       command: command,
       message: 'Command generated successfully',
       alternatives: alternatives,
-      instructions: 'Server uses real session cookies for direct downloads!'
+      instructions: 'Server uses proper cookie file for direct downloads!'
     });
     
   } catch (error) {
@@ -707,7 +741,7 @@ app.post('/api/command', (req, res) => {
   }
 });
 
-// Cleanup old downloads
+// Cleanup old downloads and cookie files
 setInterval(async () => {
   try {
     const files = await fs.readdir('/tmp/downloads');
@@ -720,6 +754,16 @@ setInterval(async () => {
       if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
         await fs.unlink(filePath);
         console.log(`🧹 Auto-cleaned: ${file}`);
+      }
+    }
+    
+    // Clean old cookie file if expired
+    if (Date.now() > cookieFileExpiry) {
+      try {
+        await fs.unlink(cookieFilePath);
+        console.log('🧹 Cleaned expired cookie file');
+      } catch (e) {
+        // File may not exist
       }
     }
   } catch (error) {
@@ -743,14 +787,14 @@ const server = app.listen(port, () => {
     console.log('🔧 Starting background initialization...');
     quickYtDlpCheck();
     
-    // Initialize real session after yt-dlp is ready
+    // Initialize cookie file after yt-dlp is ready
     setTimeout(async () => {
       if (ytDlpAvailable) {
-        console.log('🍪 Initializing real YouTube session...');
-        await establishRealSession();
-        console.log('🎯 Real session authentication ready!');
+        console.log('🍪 Initializing YouTube cookie file...');
+        await establishRealSessionFile();
+        console.log('🎯 Cookie file authentication ready!');
       }
-    }, 5000);
+    }, 3000);
   }, 1000);
 });
 
