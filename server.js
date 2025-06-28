@@ -6,7 +6,6 @@ const fs = require('fs').promises;
 const { spawn, exec } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -27,7 +26,6 @@ app.use(helmet({
     },
   },
 }));
-
 
 app.use(compression());
 app.use(cors());
@@ -52,110 +50,36 @@ let ytDlpPath = 'yt-dlp';
 let directDownloadAttempts = 0;
 let successfulDownloads = 0;
 
-// Cookie authentication variables
-let browserInstance = null;
-let youtubeCookies = null;
-let cookieExpiry = null;
-let cookieString = null;
+// Enhanced User Agents for rotation
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+];
 
-// Initialize browser and get YouTube cookies
-const initializeBrowser = async () => {
-  try {
-    console.log('🌐 Initializing browser for cookie extraction...');
-    
-    browserInstance = await puppeteer.launch({
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
-      ]
-    });
-    
-    const page = await browserInstance.newPage();
-    
-    // Set realistic headers and viewport
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    // Set additional headers
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-    });
-    
-    // Visit YouTube to establish session
-    console.log('📺 Visiting YouTube to establish authenticated session...');
-    await page.goto('https://www.youtube.com/', { 
-      waitUntil: 'networkidle2',
-      timeout: 60000 
-    });
-    
-    // Wait for page to fully load
-    await page.waitForTimeout(5000);
-    
-    // Try to interact with the page to seem more human
-    try {
-      await page.evaluate(() => {
-        window.scrollBy(0, 100);
-      });
-      await page.waitForTimeout(2000);
-    } catch (e) {
-      // Ignore interaction errors
-    }
-    
-    // Get cookies
-    const cookies = await page.cookies();
-    console.log(`🍪 Extracted ${cookies.length} cookies from YouTube`);
-    
-    // Convert cookies to different formats
-    youtubeCookies = cookies;
-    
-    // Create cookie string for headers
-    cookieString = cookies.map(cookie => {
-      return `${cookie.name}=${cookie.value}`;
-    }).join('; ');
-    
-    // Create Netscape cookie format for yt-dlp
-    const netscapeCookies = cookies.map(cookie => {
-      return `${cookie.domain}\t${cookie.httpOnly ? 'FALSE' : 'TRUE'}\t${cookie.path}\t${cookie.secure ? 'TRUE' : 'FALSE'}\t${cookie.expires ? Math.floor(cookie.expires) : '0'}\t${cookie.name}\t${cookie.value}`;
-    }).join('\n');
-    
-    // Save cookies to file for yt-dlp
-    const cookiesPath = path.join(TEMP_DIR, 'youtube_cookies.txt');
-    await fs.writeFile(cookiesPath, '# Netscape HTTP Cookie File\n' + netscapeCookies);
-    
-    cookieExpiry = Date.now() + (6 * 60 * 60 * 1000); // Expire in 6 hours
-    
-    await page.close();
-    console.log('✅ Browser session established and cookies saved');
-    
-  } catch (error) {
-    console.error('❌ Browser initialization failed:', error);
-    if (browserInstance) {
-      try {
-        await browserInstance.close();
-      } catch (e) {
-        // Ignore close errors
-      }
-      browserInstance = null;
-    }
-  }
+let currentUserAgentIndex = 0;
+
+// Get rotating user agent
+const getRandomUserAgent = () => {
+  const agent = userAgents[currentUserAgentIndex];
+  currentUserAgentIndex = (currentUserAgentIndex + 1) % userAgents.length;
+  return agent;
 };
 
-// Get fresh cookies if needed
-const getFreshCookies = async () => {
-  if (!youtubeCookies || !cookieExpiry || Date.now() > cookieExpiry) {
-    console.log('🔄 Refreshing YouTube cookies...');
-    await initializeBrowser();
-  }
-  return path.join(TEMP_DIR, 'youtube_cookies.txt');
+// Create realistic session cookies (simple approach)
+const createSessionCookies = () => {
+  const sessionId = Math.random().toString(36).substring(2, 15);
+  const timestamp = Date.now();
+  
+  // Basic session cookies that look realistic
+  return [
+    `VISITOR_INFO1_LIVE=${sessionId}_${timestamp}`,
+    `YSC=${sessionId}`,
+    `PREF=f1=50000000&f6=40000000&hl=en`,
+    `CONSENT=YES+cb.20210328-17-p0.en+FX+667`,
+    `GPS=1`
+  ].join('; ');
 };
 
 // Install yt-dlp
@@ -224,7 +148,7 @@ const extractVideoId = (url) => {
   return match ? match[1] : null;
 };
 
-// Get video info with cookie authentication
+// Enhanced video info with multiple anti-detection strategies
 const getVideoInfo = async (url) => {
   return new Promise(async (resolve, reject) => {
     if (!ytDlpAvailable) {
@@ -232,78 +156,108 @@ const getVideoInfo = async (url) => {
       return;
     }
 
-    console.log(`🔍 Getting video info with cookie authentication: ${url}`);
+    console.log(`🔍 Getting video info with enhanced anti-detection: ${url}`);
     
-    try {
-      // Get fresh cookies
-      const cookiesPath = await getFreshCookies();
-      
-      const args = [
-        '--dump-json', 
-        '--no-download',
-        '--no-warnings',
-        '--ignore-errors',
-        '--cookies', cookiesPath,
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--add-header', 'Accept-Language:en-US,en;q=0.9',
-        '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        '--extractor-args', 'youtube:player_client=web',
-        url
-      ];
-      
-      const ytdlp = spawn(ytDlpPath, args);
-      let data = '';
-      let errorData = '';
-      
-      ytdlp.stdout.on('data', (chunk) => {
-        data += chunk;
-      });
-      
-      ytdlp.stderr.on('data', (chunk) => {
-        errorData += chunk;
-      });
-      
-      ytdlp.on('close', (code) => {
-        if (code === 0 && data.trim()) {
-          try {
-            const info = JSON.parse(data.trim());
-            resolve({
-              title: info.title || 'Unknown Title',
-              duration: info.duration || 0,
-              uploader: info.uploader || 'Unknown Uploader',
-              view_count: info.view_count || 0,
-              thumbnail: info.thumbnail || '',
-              webpage_url: info.webpage_url || url
-            });
-          } catch (parseError) {
-            console.error('JSON parse error:', parseError);
-            reject(new Error('Failed to parse video info'));
-          }
-        } else {
-          console.error('Video info error:', errorData);
-          if (errorData.includes('Sign in to confirm')) {
-            console.log('🔄 Authentication failed, refreshing cookies...');
-            youtubeCookies = null;
-            cookieExpiry = null;
-            reject(new Error('Authentication failed - will refresh cookies'));
-          } else {
-            reject(new Error('Failed to get video info: ' + errorData));
-          }
-        }
-      });
+    // Try multiple strategies
+    const strategies = [
+      {
+        name: 'web_enhanced',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', getRandomUserAgent(),
+          '--add-header', 'Accept-Language:en-US,en;q=0.9',
+          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          '--add-header', 'Sec-Fetch-Mode:navigate',
+          '--add-header', 'Sec-Fetch-Site:none',
+          '--add-header', 'Sec-Fetch-User:?1',
+          '--add-header', `Cookie: ${createSessionCookies()}`,
+          '--extractor-args', 'youtube:player_client=web',
+          '--sleep-interval', '1',
+          url
+        ]
+      },
+      {
+        name: 'android_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SM-G981B) gzip',
+          '--extractor-args', 'youtube:player_client=android',
+          '--sleep-interval', '2',
+          url
+        ]
+      },
+      {
+        name: 'ios_client',
+        args: [
+          '--dump-json', '--no-download', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.ios.youtube/18.11.2 (iPhone14,3; U; CPU iOS 16_4 like Mac OS X)',
+          '--extractor-args', 'youtube:player_client=ios',
+          '--sleep-interval', '2',
+          url
+        ]
+      }
+    ];
+    
+    for (const strategy of strategies) {
+      try {
+        console.log(`🔧 Trying ${strategy.name} strategy...`);
+        
+        const info = await new Promise((strategyResolve, strategyReject) => {
+          const ytdlp = spawn(ytDlpPath, strategy.args);
+          let data = '';
+          let errorData = '';
+          
+          ytdlp.stdout.on('data', (chunk) => {
+            data += chunk;
+          });
+          
+          ytdlp.stderr.on('data', (chunk) => {
+            errorData += chunk;
+          });
+          
+          ytdlp.on('close', (code) => {
+            if (code === 0 && data.trim()) {
+              try {
+                const parsed = JSON.parse(data.trim());
+                strategyResolve(parsed);
+              } catch (parseError) {
+                strategyReject(new Error('Parse error'));
+              }
+            } else {
+              strategyReject(new Error(`Strategy failed: ${errorData}`));
+            }
+          });
 
-      setTimeout(() => {
-        ytdlp.kill();
-        reject(new Error('Video info request timed out'));
-      }, 45000);
-      
-    } catch (error) {
-      reject(error);
+          setTimeout(() => {
+            ytdlp.kill();
+            strategyReject(new Error('Strategy timeout'));
+          }, 20000);
+        });
+        
+        console.log(`✅ ${strategy.name} strategy succeeded`);
+        resolve({
+          title: info.title || 'Unknown Title',
+          duration: info.duration || 0,
+          uploader: info.uploader || 'Unknown Uploader',
+          view_count: info.view_count || 0,
+          thumbnail: info.thumbnail || '',
+          webpage_url: info.webpage_url || url,
+          strategy_used: strategy.name
+        });
+        return;
+        
+      } catch (error) {
+        console.log(`❌ ${strategy.name} failed:`, error.message);
+        continue;
+      }
     }
+    
+    console.log('🤖 All strategies failed - using fallback');
+    reject(new Error('All anti-detection strategies failed'));
   });
 };
 
-// Download video with cookie authentication
+// Enhanced download with multiple strategies
 const downloadVideo = async (url, quality, downloadId) => {
   return new Promise(async (resolve, reject) => {
     if (!ytDlpAvailable) {
@@ -312,105 +266,143 @@ const downloadVideo = async (url, quality, downloadId) => {
     }
 
     directDownloadAttempts++;
-    console.log(`⬇️ Starting authenticated download: ${downloadId}`);
+    console.log(`⬇️ Starting enhanced download: ${downloadId}`);
     
-    try {
-      // Get fresh cookies
-      const cookiesPath = await getFreshCookies();
-      
-      const filename = `${downloadId}.%(ext)s`;
-      const outputPath = path.join(TEMP_DIR, filename);
-      
-      const args = [
-        '-o', outputPath,
-        '--newline',
-        '--no-warnings',
-        '--ignore-errors',
-        '--cookies', cookiesPath,
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--add-header', 'Accept-Language:en-US,en;q=0.9',
-        '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        '--add-header', 'Sec-Fetch-Mode:navigate',
-        '--add-header', 'Sec-Fetch-Site:none',
-        '--sleep-interval', '1',
-        '--max-sleep-interval', '3',
-        '--retries', '3',
-        '--fragment-retries', '3',
-        '--extractor-args', 'youtube:player_client=web'
-      ];
-      
-      // Quality settings
-      if (quality === 'audio') {
-        args.push('--extract-audio', '--audio-format', 'mp3');
-      } else if (quality !== 'best') {
-        args.push('-f', quality);
+    const filename = `${downloadId}.%(ext)s`;
+    const outputPath = path.join(TEMP_DIR, filename);
+    
+    // Enhanced download strategies
+    const strategies = [
+      {
+        name: 'enhanced_web',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', getRandomUserAgent(),
+          '--add-header', 'Accept-Language:en-US,en;q=0.9',
+          '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          '--add-header', 'Sec-Fetch-Mode:navigate',
+          '--add-header', 'Sec-Fetch-Site:none',
+          '--add-header', 'Sec-Fetch-User:?1',
+          '--add-header', `Cookie: ${createSessionCookies()}`,
+          '--sleep-interval', '2', '--max-sleep-interval', '4',
+          '--retries', '3', '--fragment-retries', '3',
+          '--extractor-args', 'youtube:player_client=web'
+        ]
+      },
+      {
+        name: 'android_fallback',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.android.youtube/18.11.34 (Linux; U; Android 11; SM-G981B) gzip',
+          '--sleep-interval', '3', '--max-sleep-interval', '6',
+          '--retries', '5', '--fragment-retries', '5',
+          '--extractor-args', 'youtube:player_client=android'
+        ]
+      },
+      {
+        name: 'ios_fallback',
+        args: [
+          '-o', outputPath, '--newline', '--no-warnings', '--ignore-errors',
+          '--user-agent', 'com.google.ios.youtube/18.11.2 (iPhone14,3; U; CPU iOS 16_4 like Mac OS X)',
+          '--sleep-interval', '4', '--max-sleep-interval', '8',
+          '--retries', '7', '--fragment-retries', '7',
+          '--extractor-args', 'youtube:player_client=ios'
+        ]
       }
-      
-      args.push(url);
-      
-      console.log('🍪 Starting download with cookie authentication...');
-      const ytdlp = spawn(ytDlpPath, args);
-      
-      ytdlp.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('Download output:', output);
+    ];
+    
+    // Add quality settings to all strategies
+    for (const strategy of strategies) {
+      if (quality === 'audio') {
+        strategy.args.push('--extract-audio', '--audio-format', 'mp3');
+      } else if (quality !== 'best') {
+        strategy.args.push('-f', quality);
+      }
+      strategy.args.push(url);
+    }
+    
+    // Try each strategy
+    for (const strategy of strategies) {
+      try {
+        console.log(`🔧 Trying ${strategy.name} download strategy...`);
         
-        // Parse progress
-        const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
-        if (progressMatch) {
-          const progress = parseFloat(progressMatch[1]);
+        await new Promise((strategyResolve, strategyReject) => {
+          const ytdlp = spawn(ytDlpPath, strategy.args);
+          
           downloadStatus.set(downloadId, {
             status: 'downloading',
-            progress: progress
+            progress: 0,
+            strategy: strategy.name
           });
-        }
-      });
-      
-      ytdlp.stderr.on('data', (data) => {
-        const error = data.toString();
-        console.error('Download stderr:', error);
-        
-        if (error.includes('Sign in to confirm')) {
-          console.log('🤖 Authentication failed during download, refreshing cookies...');
-          youtubeCookies = null;
-          cookieExpiry = null;
-        }
-      });
-      
-      ytdlp.on('close', (code) => {
-        if (code === 0) {
-          successfulDownloads++;
-          downloadStatus.set(downloadId, { status: 'completed' });
-          console.log(`✅ Authenticated download completed: ${downloadId} (${successfulDownloads}/${directDownloadAttempts} success rate)`);
-          resolve(downloadId);
-        } else {
-          const errorMsg = `Download failed with code ${code}`;
-          downloadStatus.set(downloadId, { 
-            status: 'error', 
-            error: errorMsg
+          
+          ytdlp.stdout.on('data', (data) => {
+            const output = data.toString();
+            
+            const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
+            if (progressMatch) {
+              const progress = parseFloat(progressMatch[1]);
+              downloadStatus.set(downloadId, {
+                status: 'downloading',
+                progress: progress,
+                strategy: strategy.name
+              });
+            }
           });
-          console.error(`❌ ${errorMsg}`);
-          reject(new Error(errorMsg));
-        }
-      });
-      
-      // Timeout after 10 minutes
-      setTimeout(() => {
-        ytdlp.kill();
-        downloadStatus.set(downloadId, { 
-          status: 'error', 
-          error: 'Download timed out'
+          
+          ytdlp.stderr.on('data', (data) => {
+            const error = data.toString();
+            if (error.includes('Sign in to confirm') || 
+                error.includes('bot') || 
+                error.includes('authentication')) {
+              console.log(`🤖 Bot detection on ${strategy.name}`);
+            }
+          });
+          
+          ytdlp.on('close', (code) => {
+            if (code === 0) {
+              console.log(`✅ ${strategy.name} download succeeded`);
+              strategyResolve();
+            } else {
+              console.log(`❌ ${strategy.name} failed with code ${code}`);
+              strategyReject(new Error(`${strategy.name} failed`));
+            }
+          });
+          
+          setTimeout(() => {
+            ytdlp.kill();
+            strategyReject(new Error(`${strategy.name} timeout`));
+          }, 600000); // 10 minutes
         });
-        reject(new Error('Download timeout'));
-      }, 600000);
-      
-    } catch (error) {
-      downloadStatus.set(downloadId, { 
-        status: 'error', 
-        error: error.message
-      });
-      reject(error);
+        
+        // Success!
+        successfulDownloads++;
+        downloadStatus.set(downloadId, { 
+          status: 'completed',
+          strategy: strategy.name
+        });
+        console.log(`✅ Download completed with ${strategy.name}: ${downloadId}`);
+        resolve(downloadId);
+        return;
+        
+      } catch (error) {
+        console.log(`❌ ${strategy.name} download failed:`, error.message);
+        downloadStatus.set(downloadId, {
+          status: 'retrying',
+          progress: 0,
+          attempted_strategy: strategy.name,
+          error: error.message
+        });
+        continue;
+      }
     }
+    
+    // All strategies failed
+    downloadStatus.set(downloadId, { 
+      status: 'error', 
+      error: 'All download strategies failed',
+      fallback: true
+    });
+    reject(new Error('All download strategies failed'));
   });
 };
 
@@ -422,7 +414,6 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
-    cookie_auth: !!youtubeCookies,
     download_stats: {
       attempts: directDownloadAttempts,
       successful: successfulDownloads,
@@ -435,12 +426,12 @@ app.get('/api/capabilities', (req, res) => {
   res.json({
     ytdlp_available: ytDlpAvailable,
     ytdlp_path: ytDlpPath,
-    cookie_authentication: !!youtubeCookies,
+    anti_detection: true,
     features: {
       video_info: ytDlpAvailable,
       video_download: ytDlpAvailable,
       command_generation: true,
-      cookie_auth: !!youtubeCookies
+      multi_strategy: true
     },
     download_stats: {
       attempts: directDownloadAttempts,
@@ -485,12 +476,11 @@ app.post('/api/info', async (req, res) => {
       res.json({ 
         success: true, 
         ...info,
-        message: 'Video info retrieved with authentication'
+        message: 'Video info retrieved with multi-strategy anti-detection'
       });
     } catch (error) {
       console.error('Video info error:', error);
       
-      // Fallback to basic info
       const basicInfo = {
         title: `YouTube Video (${extractVideoId(url) || 'Unknown'})`,
         duration: 0,
@@ -504,7 +494,7 @@ app.post('/api/info', async (req, res) => {
       res.json({ 
         success: true, 
         ...basicInfo,
-        message: 'Using basic info due to authentication issues',
+        message: 'Using basic info due to detection issues',
         error: error.message
       });
     }
@@ -540,7 +530,7 @@ app.post('/api/download', async (req, res) => {
     const downloadId = uuidv4();
     downloadStatus.set(downloadId, { status: 'starting' });
     
-    // Start download with cookie authentication
+    // Start download with multiple strategies
     downloadVideo(url, quality, downloadId).catch(err => {
       console.error('Download error:', err);
       downloadStatus.set(downloadId, { 
@@ -552,7 +542,7 @@ app.post('/api/download', async (req, res) => {
     res.json({ 
       success: true, 
       downloadId,
-      message: 'Download started with cookie authentication'
+      message: 'Download started with multi-strategy anti-detection'
     });
     
   } catch (error) {
@@ -589,7 +579,6 @@ app.get('/api/file/:downloadId', async (req, res) => {
       });
     }
     
-    // Find the downloaded file
     const files = await fs.readdir(TEMP_DIR);
     const downloadedFile = files.find(file => file.startsWith(downloadId));
     
@@ -602,17 +591,14 @@ app.get('/api/file/:downloadId', async (req, res) => {
     const filePath = path.join(TEMP_DIR, downloadedFile);
     const stats = await fs.stat(filePath);
     
-    // Set headers for download
     const cleanFilename = downloadedFile.replace(downloadId + '.', '');
     res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
     res.setHeader('Content-Length', stats.size);
     res.setHeader('Content-Type', 'application/octet-stream');
     
-    // Stream the file
     const fileStream = require('fs').createReadStream(filePath);
     fileStream.pipe(res);
     
-    // Cleanup after download
     fileStream.on('end', async () => {
       try {
         await fs.unlink(filePath);
@@ -651,8 +637,9 @@ app.post('/api/command', (req, res) => {
     command += `"${url}"`;
     
     const alternatives = {
+      withUserAgent: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" '),
       withCookies: command.replace('yt-dlp ', 'yt-dlp --cookies-from-browser chrome '),
-      withUserAgent: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" ')
+      enhanced: command.replace('yt-dlp ', 'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --sleep-interval 2 --retries 5 ')
     };
     
     res.json({
@@ -660,7 +647,7 @@ app.post('/api/command', (req, res) => {
       command: command,
       message: 'Command generated successfully',
       alternatives: alternatives,
-      instructions: 'Server now uses cookie authentication for direct downloads!'
+      instructions: 'Server uses multi-strategy anti-detection for direct downloads!'
     });
     
   } catch (error) {
@@ -671,19 +658,16 @@ app.post('/api/command', (req, res) => {
   }
 });
 
-// Cleanup old downloads every hour
+// Cleanup old downloads
 setInterval(async () => {
   try {
     const files = await fs.readdir(TEMP_DIR);
     const now = Date.now();
     
     for (const file of files) {
-      if (file === 'youtube_cookies.txt') continue; // Don't delete cookies
-      
       const filePath = path.join(TEMP_DIR, file);
       const stats = await fs.stat(filePath);
       
-      // Delete files older than 1 hour
       if (now - stats.mtime.getTime() > 60 * 60 * 1000) {
         await fs.unlink(filePath);
         console.log(`🧹 Auto-cleaned: ${file}`);
@@ -701,60 +685,33 @@ app.get('*', (req, res) => {
 
 // Initialize server
 const startServer = async () => {
-  console.log('🚀 Starting YouTube Downloader with Cookie Authentication...');
+  console.log('🚀 Starting YouTube Downloader with Enhanced Anti-Detection...');
   
-  // Start server immediately
   const server = app.listen(port, () => {
     console.log(`🌟 Server running on port ${port}`);
     console.log(`🌍 Server is LIVE and ready for requests!`);
   });
   
-  // Initialize components in background
   setTimeout(async () => {
     try {
       await ensureTempDir();
       await tryInstallYtDlp();
       
       if (ytDlpAvailable) {
-        console.log('🍪 Initializing cookie authentication...');
-        await initializeBrowser();
-        console.log(`📱 Server ready with cookie authentication!`);
+        console.log(`📱 Multi-strategy anti-detection ready!`);
+        console.log(`🔄 User agent rotation: ${userAgents.length} agents`);
+        console.log(`🍪 Session cookie generation: Active`);
       } else {
-        console.log('⚠️  yt-dlp not available - limited functionality');
+        console.log('⚠️  yt-dlp not available - command generation only');
       }
       
     } catch (error) {
-      console.log('⚠️  Initialization completed with some limitations');
+      console.log('⚠️  Initialization completed with limitations');
     }
   }, 2000);
   
   return server;
 };
-
-// Cleanup on shutdown
-process.on('SIGTERM', async () => {
-  console.log('👋 Shutting down gracefully...');
-  if (browserInstance) {
-    try {
-      await browserInstance.close();
-    } catch (e) {
-      // Ignore errors
-    }
-  }
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('👋 Shutting down gracefully...');
-  if (browserInstance) {
-    try {
-      await browserInstance.close();
-    } catch (e) {
-      // Ignore errors
-    }
-  }
-  process.exit(0);
-});
 
 // Start the server
 startServer().catch(error => {
@@ -762,4 +719,14 @@ startServer().catch(error => {
   app.listen(port, () => {
     console.log(`🆘 Emergency server running on port ${port}`);
   });
+});
+
+process.on('SIGTERM', () => {
+  console.log('👋 Shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('👋 Shutting down gracefully...');
+  process.exit(0);
 });
